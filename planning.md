@@ -108,7 +108,52 @@ For my Howard University administrative Guide, I want accuracy to be my highest 
      Label each stage with the tool or library you're using.
      You can use ASCII art, a Mermaid diagram, or embed a sketch as an image.
      You'll use this diagram as context when prompting AI tools to implement each stage. -->
+https://mermaid.ai/app/projects/99c89a16-c16b-49d0-abfa-91d05d9607db/diagrams/580d5a70-f4ec-4530-a9c4-eb12e346f697/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiNTgwZDVhNzAtZjRlYy00NTMwLWE5YzQtZWIxMmUzNDZmNjk3IiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc4MDk4MDEyOH0.htOKrLcKlXV9mfOkWYbgmDS3apzYibvJ6dbBY2XTBvU?entryPoint=share-modal
 
+---
+config:
+  layout: elk
+---
+graph TD
+    classDef source stroke:#a78bfa,fill:#f5f3ff;
+    classDef processing stroke:#818cf8,fill:#eef2ff;
+    classDef storage stroke:#4ade80,fill:#f0fdf4;
+    classDef runtime stroke:#fb923c,fill:#fff7ed;
+    classDef subgraphStyle stroke:#ccc,fill:#fafafa;
+
+    subgraph Ingestion_Pipeline ["1. Ingestion Pipeline - Offline Phase"]
+        A1["Web Pages & Threads<br/>e.g., Reddit Forums, SFS Portals"]:::source
+        A2["Short-Form Media<br/>e.g., Student TikTok Videos"]:::source
+
+        A1 --> B1["BeautifulSoup / Python Scrapers"]:::processing
+        A2 --> B2["Audio Extractor & Transcriber<br/>e.g., supadata API / yt-dlp + Whisper"]:::processing
+        
+        B1 --> C["RecursiveCharacterTextSplitter<br/>Chunk Size: 800 | Overlap: 150"]:::processing
+        B2 --> C
+        
+        C --> D["Sentence-Transformers<br/>all-MiniLM-L6-v2"]:::processing
+        
+        D --> E[("ChromaDB Vector Store")]:::storage
+    end
+
+    subgraph Runtime_Query_Pipeline ["2. Runtime Query Pipeline - Online Phase"]
+        User(["Student / User Input Question"]):::runtime
+        --> QEmbed["Query Vectorization<br/>all-MiniLM-L6-v2 Engine"]:::processing
+        
+        QEmbed --> Search{"Vector Search<br/>Cosine Similarity"}:::processing
+        
+        E -.->|"Index Lookup"| Search
+        
+        Search -->|"Retrieve Top-K Chunks<br/>K = 4"| Context["Context Assembler<br/>Combine Snippets + Email Templates"]:::processing
+        
+        User -.->|"Direct Pass-Through"| Context
+    end
+
+    subgraph Generation_Phase ["3. Response Generation Phase"]
+        Context --> LLM["Groq Inference Engine<br/>llama-3.3-70b-versatile"]:::runtime
+        
+        LLM --> Out(["Actionable Answer / Generated Email Script"]):::runtime
+    end
 ---
 
 ## AI Tool Plan
