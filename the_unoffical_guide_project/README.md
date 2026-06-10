@@ -124,9 +124,9 @@ Run against the live system (`app.answer_question`) on the final 228-chunk index
 |---|----------|-----------------|------------------------------|-------------------|-------------------|
 | 1 | Best way to contact financial aid (first-year) | Email for a record, call for a fast response | Walk-in hours (last sign-in 3:15 PM), phone 800-822-6363, office hours, virtual chat, address | Relevant | Partially accurate |
 | 2 | Who to escalate to (not the President) | "John Gordon" | Financial Aid Office phone/email + walk-in (no named individual) | Partially relevant | Inaccurate* |
-| 3 | Problem with work study | Howard cut work-study amid new rules / limited funds | Refusal — no relevant content retrieved | Off-target | Correctly refused (coverage gap) |
+| 3 | Problem with work study | Howard cut work-study amid new rules / limited funds | Refusal — no relevant content retrieved | Off-target | Inaccurate (correct refusal, but no answer given) |
 | 4 | Grad student financial support resources | List of grants/aid links | Types of aid (grants, scholarships, loans), how-to-apply-for-federal-aid guide, FA website | Relevant | Partially accurate |
-| 5 | Clear a financial hold on Workday | Links/steps to remove a hold | Refusal — no step-by-step content in corpus | Off-target | Correctly refused (coverage gap) |
+| 5 | Clear a financial hold on Workday | Links/steps to remove a hold | Refusal — no step-by-step content in corpus | Off-target | Inaccurate (correct refusal, but no answer given) |
 
 \* **Q2 note:** the expected answer "John Gordon" came from an early *mock* TikTok
 transcript that was later replaced with 9 real videos (Milestone 3 upgrade). The
