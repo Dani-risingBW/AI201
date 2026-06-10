@@ -43,8 +43,16 @@ SOURCES = {
     "12_rate_my_professor": "Howard University Faculty"  # Trigger for RMP API pipeline
 }
 
-# List of example professors to scrape from Howard for Source 12
+# --- Source 12: Rate My Professor selection ---
+# (a) Explicit names — looked up individually (use the exact RMP spelling).
+#     Add as many names as you like; each is fetched and added to source 12.
 PROFESSORS_TO_SCRAPE = ["Legand Burge"]
+# (b) Automatic top-N — also pull the N highest-ranked Howard professors with no
+#     names needed. Set RMP_TOP_N = 0 to disable and use only the list above.
+RMP_TOP_N = 5
+RMP_POOL_SIZE = 300          # candidate professors fetched, then ranked locally
+RMP_MIN_RATINGS = 5          # ignore sparsely-rated profs when picking top-N
+RMP_RANK_BY = "most_rated"   # "most_rated" (numRatings) or "highest_rated" (avgRating)
 
 # ==========================================
 # 2. RATE MY PROFESSOR INGESTION MODULE (direct GraphQL — the pip library is broken)
@@ -68,65 +76,115 @@ def _rmp_query(query: str, variables: dict) -> dict:
     resp.raise_for_status()
     return resp.json()
 
-def scrape_ratemyprofessor_data(target_professors) -> str:
-    """
-    Queries Rate My Professors' GraphQL API to locate Howard University (School-421)
-    faculty reviews, compiling metrics and student comments for chunk injection.
-    """
-    print("Connecting to RateMyProfessors GraphQL API...")
+# Field set shared by name-lookup and top-N pool queries.
+_TEACHER_FIELDS = (
+    "id firstName lastName department avgRating avgDifficulty numRatings wouldTakeAgainPercent"
+)
 
-    teacher_query = (
+def _lookup_teacher_by_name(name: str):
+    """Finds a single Howard professor node by name (first match), or None."""
+    q = (
         "query T($q: TeacherSearchQuery!){ newSearch{ teachers(query: $q){ edges{ node{ "
-        "id firstName lastName department avgRating avgDifficulty numRatings wouldTakeAgainPercent "
-        "} } } } }"
+        + _TEACHER_FIELDS + " } } } } }"
     )
+    try:
+        data = _rmp_query(q, {"q": {"text": name, "schoolID": HOWARD_SCHOOL_ID}})
+        edges = data.get("data", {}).get("newSearch", {}).get("teachers", {}).get("edges", [])
+    except Exception as e:
+        print(f"  RMP request failed for {name}: {e}")
+        return None
+    if not edges:
+        print(f"  Could not retrieve profile data for {name}.")
+        return None
+    return edges[0]["node"]
+
+def _fetch_top_teachers(n: int, pool_size: int, min_ratings: int, rank_by: str):
+    """Fetches a pool of Howard professors and returns the top-n ranked nodes."""
+    q = (
+        "query P($q: TeacherSearchQuery!, $n: Int!){ newSearch{ teachers(query: $q, first: $n){ "
+        "edges{ node{ " + _TEACHER_FIELDS + " } } } } }"
+    )
+    try:
+        data = _rmp_query(q, {"q": {"text": "", "schoolID": HOWARD_SCHOOL_ID}, "n": pool_size})
+        nodes = [e["node"] for e in
+                 data.get("data", {}).get("newSearch", {}).get("teachers", {}).get("edges", [])]
+    except Exception as e:
+        print(f"  RMP top-N pool request failed: {e}")
+        return []
+
+    # Only rank professors with enough reviews to be meaningful.
+    nodes = [t for t in nodes if (t.get("numRatings") or 0) >= min_ratings]
+    if rank_by == "highest_rated":
+        nodes.sort(key=lambda t: (t.get("avgRating") or 0, t.get("numRatings") or 0), reverse=True)
+    else:  # "most_rated"
+        nodes.sort(key=lambda t: (t.get("numRatings") or 0, t.get("avgRating") or 0), reverse=True)
+    return nodes[:n]
+
+def _format_professor_dossier(node: dict) -> str:
+    """Builds the dossier text (metrics + student comments) for one professor."""
     ratings_query = (
         "query R($id: ID!){ node(id: $id){ ... on Teacher{ ratings(first: 20){ edges{ node{ "
         "class comment clarityRating difficultyRating wouldTakeAgain date "
         "} } } } } }"
     )
+    full_name = f"{node['firstName']} {node['lastName']}"
+    text = f"\n\n[RATE MY PROFESSOR DOSSIER: {full_name}]\n"
+    text += f"Department: {node['department']} | Overall Rating: {node['avgRating']}/5\n"
+    text += f"Difficulty Index: {node['avgDifficulty']}/5\n"
+    text += f"Total Student Ratings: {node['numRatings']}\n"
+    wta = node.get("wouldTakeAgainPercent")
+    if wta is not None and wta >= 0:
+        text += f"Would Take Again: {round(wta, 1)}%\n"
+
+    # Append individual textual evaluations
+    text += "Student Comments & Evaluations:\n"
+    try:
+        rdata = _rmp_query(ratings_query, {"id": node["id"]})
+        rating_edges = rdata.get("data", {}).get("node", {}).get("ratings", {}).get("edges", [])
+        for r in rating_edges:
+            rn = r["node"]
+            comment = (rn.get("comment") or "").strip().replace("\n", " ")
+            text += (
+                f"- (Course: {rn.get('class', 'N/A')}) Rating: {rn.get('clarityRating', '?')}/5. "
+                f"Difficulty: {rn.get('difficultyRating', '?')}/5. Comment: {comment}\n"
+            )
+    except Exception as e:
+        print(f"  Could not fetch individual ratings for {full_name}: {e}")
+    return text
+
+def scrape_ratemyprofessor_data(target_professors, top_n: int = RMP_TOP_N) -> str:
+    """
+    Queries Rate My Professors' GraphQL API for Howard University (School-421).
+    Combines (a) any explicitly named professors with (b) the automatic top-N
+    ranked Howard professors, de-duplicates them, and compiles metrics +
+    student comments for chunk injection.
+    """
+    print("Connecting to RateMyProfessors GraphQL API...")
+
+    selected = []        # ordered list of teacher nodes
+    seen_ids = set()
+
+    # (a) Explicit names first (exact RMP spelling)
+    for prof_name in target_professors:
+        print(f"Looking up named professor: {prof_name}...")
+        node = _lookup_teacher_by_name(prof_name)
+        if node and node["id"] not in seen_ids:
+            selected.append(node)
+            seen_ids.add(node["id"])
+
+    # (b) Automatic top-N Howard professors
+    if top_n and top_n > 0:
+        print(f"Fetching top {top_n} Howard professors (ranked by {RMP_RANK_BY})...")
+        for node in _fetch_top_teachers(top_n, RMP_POOL_SIZE, RMP_MIN_RATINGS, RMP_RANK_BY):
+            if node["id"] not in seen_ids:
+                selected.append(node)
+                seen_ids.add(node["id"])
 
     compiled_rmp_data = ""
-
-    for prof_name in target_professors:
-        print(f"Scraping RMP metrics for: {prof_name}...")
-        try:
-            data = _rmp_query(teacher_query, {"q": {"text": prof_name, "schoolID": HOWARD_SCHOOL_ID}})
-            edges = data.get("data", {}).get("newSearch", {}).get("teachers", {}).get("edges", [])
-        except Exception as e:
-            print(f"  RMP request failed for {prof_name}: {e}")
-            continue
-
-        if not edges:
-            print(f"Could not retrieve profile data for {prof_name}.")
-            continue
-
-        node = edges[0]["node"]
-        full_name = f"{node['firstName']} {node['lastName']}"
-        prof_text = f"\n\n[RATE MY PROFESSOR DOSSIER: {full_name}]\n"
-        prof_text += f"Department: {node['department']} | Overall Rating: {node['avgRating']}/5\n"
-        prof_text += f"Difficulty Index: {node['avgDifficulty']}/5\n"
-        prof_text += f"Total Student Ratings: {node['numRatings']}\n"
-        wta = node.get("wouldTakeAgainPercent")
-        if wta is not None and wta >= 0:
-            prof_text += f"Would Take Again: {round(wta, 1)}%\n"
-
-        # Append individual textual evaluations
-        prof_text += "Student Comments & Evaluations:\n"
-        try:
-            rdata = _rmp_query(ratings_query, {"id": node["id"]})
-            rating_edges = rdata.get("data", {}).get("node", {}).get("ratings", {}).get("edges", [])
-            for r in rating_edges:
-                rn = r["node"]
-                comment = (rn.get("comment") or "").strip().replace("\n", " ")
-                prof_text += (
-                    f"- (Course: {rn.get('class', 'N/A')}) Rating: {rn.get('clarityRating', '?')}/5. "
-                    f"Difficulty: {rn.get('difficultyRating', '?')}/5. Comment: {comment}\n"
-                )
-        except Exception as e:
-            print(f"  Could not fetch individual ratings for {full_name}: {e}")
-
-        compiled_rmp_data += prof_text
+    for node in selected:
+        print(f"  Compiling dossier: {node['firstName']} {node['lastName']} "
+              f"({node['numRatings']} ratings, {node['avgRating']}/5)")
+        compiled_rmp_data += _format_professor_dossier(node)
 
     return compiled_rmp_data
 
