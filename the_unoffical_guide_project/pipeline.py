@@ -54,6 +54,25 @@ RMP_POOL_SIZE = 300          # candidate professors fetched, then ranked locally
 RMP_MIN_RATINGS = 5          # ignore sparsely-rated profs when picking top-N
 RMP_RANK_BY = "most_rated"   # "most_rated" (numRatings) or "highest_rated" (avgRating)
 
+# --- Source 11: TikTok short-form media ---
+# Add one or more real #howarduniversity TikTok video URLs to transcribe them
+# live with yt-dlp + faster-whisper. Each video is transcribed and tagged with
+# its own URL. Leave the list empty to fall back to the cached transcript.
+TIKTOK_URLS = [
+    # "https://www.tiktok.com/@username/video/1234567890123456789",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7530062510569884942",
+    "https://www.youtube.com/watch?v=6LeI1AlZGek",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7527812876464082189?utm_campaign=&utm_source=unknown&refer=player_v1&referrer_url=https%3A%2F%2Fwww.tiktok.com%2Fembed%2Fv3%2F7527812876464082189%3F%26autoplay%3D1&referer_video_id=7527812876464082189",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7511726905322900782?utm_campaign=&utm_source=unknown&refer=player_v1&referrer_url=https%3A%2F%2Fwww.tiktok.com%2Fembed%2Fv3%2F7511726905322900782%3F%26autoplay%3D1&referer_video_id=7511726905322900782",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7637194378301148429",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7635075980599627022",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7587096506457443639",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7568541420085120269",
+    "https://www.tiktok.com/@ssanyuspeaks/video/7536632597468728631",
+    "https://www.bing.com/videos/riverview/relatedvideo?q=tiktok+howard+university+financial+aid&qft=+filterui%3afilterhint-shortvideo&mid=DAE2CF16B4649FE4D909DAE2CF16B4649FE4D909&churl=https%3a%2f%2fwww.youtube.com%2fchannel%2fUC1VKVKhJLc7PjdPPVxTDk0Q&mmscn=stvo&ru=%2fvideos%2fsearch%3fview%3dshortvideo%26qft%3d%2bfilterui%3afilterhint-shortvideo%26q%3dtiktok%2bhoward%2buniversity%2bfinancial%2baid%26FORM%3dSVFBT&mcid=2111DD2AB2F543A7A749D4F5D1410187&FORM=VRDGAR",
+]
+WHISPER_MODEL_SIZE = "base"  # tiny | base | small (larger = more accurate, slower)
+
 # ==========================================
 # 2. RATE MY PROFESSOR INGESTION MODULE (direct GraphQL — the pip library is broken)
 # ==========================================
@@ -224,6 +243,66 @@ def scrape_and_clean_web(url: str) -> str:
         print(f"Failed parsing {url}: {e}")
         return ""
 
+def transcribe_tiktoks(urls) -> str:
+    """Downloads and transcribes one or more TikTok videos with yt-dlp +
+    faster-whisper (matches the planning.md media pipeline). Each transcript is
+    tagged with its source URL and concatenated.
+
+    Returns the combined transcript text, or "" if nothing succeeds so the
+    caller can fall back to the cached snapshot (Option E reproducibility).
+    """
+    urls = [u for u in (urls or []) if u]
+    if not urls:
+        return ""
+
+    import tempfile
+    import glob as _glob
+    import yt_dlp
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+    from faster_whisper import WhisperModel
+
+    # Load the model once and reuse it across all videos.
+    print(f"  Loading faster-whisper ({WHISPER_MODEL_SIZE})...")
+    model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+
+    compiled = ""
+    for url in urls:
+        tmpdir = tempfile.mkdtemp(prefix="tiktok_")
+        ydl_opts = {
+            # TikTok's "download" format carries real audio (its default h265
+            # streams are video-only); YouTube has no such format and falls
+            # through to bestaudio. Impersonation is required for TikTok to
+            # serve the audio-bearing format (needs curl_cffi installed).
+            "format": "download/bestaudio/best",
+            "outtmpl": os.path.join(tmpdir, "audio.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "impersonate": ImpersonateTarget("chrome"),
+        }
+        try:
+            print(f"  Downloading TikTok audio: {url}")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            files = _glob.glob(os.path.join(tmpdir, "audio.*"))
+            if not files:
+                print("  No audio file produced; skipping.")
+                continue
+
+            print("  Transcribing...")
+            segments, _info = model.transcribe(files[0])
+            text = " ".join(seg.text.strip() for seg in segments).strip()
+            if text:
+                compiled += f"\n\n[Student Video Transcript - {url}]: {text}"
+            else:
+                print("  Transcription returned no speech; skipping.")
+        except Exception as e:
+            print(f"  TikTok transcription failed for {url}: {e}")
+            continue
+
+    return compiled.strip()
+
 def scrape_pdf(url: str) -> str:
     """Downloads a PDF and extracts real text with pdfplumber (BeautifulSoup
     can't read PDFs — it would return raw binary stream data)."""
@@ -284,11 +363,18 @@ def run_full_guide_pipeline():
             loaded_documents[source_id] = parse_local_reddit_json(reddit_path)
 
         elif source_id == "11_tiktok_advice":
-            # Simulate transcription extraction layer output
-            loaded_documents[source_id] = (
-                "[Student Video Transcript]: The 'Howard Runaround' is real. If you have a block on BisonHub, "
-                "do not email general inboxes. Escalate directly to supervisors like John Gordon using clear subject headings."
-            )
+            # Real short-form media: download + transcribe the configured TikTok(s).
+            transcript = transcribe_tiktoks(TIKTOK_URLS)
+            # Option E (reproducibility): if no URL is set or the live download/
+            # transcription fails, fall back to the committed snapshot.
+            if not transcript:
+                cache_path = os.path.join(DOCUMENTS_DIR, f"{source_id}.txt")
+                if os.path.exists(cache_path):
+                    print("TikTok live transcription unavailable — using cached snapshot.")
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        transcript = f.read()
+            if transcript:
+                loaded_documents[source_id] = transcript
         elif location.lower().endswith(".pdf"):
             print(f"Extracting PDF source: {source_id}...")
             text_content = scrape_pdf(location)

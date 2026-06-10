@@ -8,12 +8,14 @@ requests>=2.31
 beautifulsoup4>=4.12
 langchain-text-splitters>=0.3
 pdfplumber>=0.11  # extract real text from the BisonHub PDF source
+yt-dlp>=2024.0        # download TikTok/YouTube audio (Source 11)
+faster-whisper>=1.0   # transcribe audio locally on CPU
+curl_cffi>=0.7        # browser impersonation so TikTok serves audio formats
 # Rate My Professor is queried directly via its GraphQL API in pipeline.py
 # (the RateMyProfessorAPI pip package no longer authenticates), so no extra dep.
 
-# Query interface — add whichever you use for Milestone 5:
-# gradio>=6.9.0
-# streamlit>=1.40.0
+# Query interface (Milestone 5)
+gradio>=4.0
 
 # Document ingestion — add if your documents/ folder contains .pdf files:
 # pdfplumber==0.11.4
