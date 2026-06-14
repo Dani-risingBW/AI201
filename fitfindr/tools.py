@@ -314,8 +314,83 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         raise ValueError("Blank response received from LLM.")
         
     except Exception:
-        # Programmatic safe string fallback alignment to protect Milestone 3 criteria
-        return (
-            f"thrifted this absolute gem of a {item_title.lower()} off {platform} for only ${price_str} "
-            f"and honestly it sets the perfect vibe for my rotation ✨ full outfit breakdown in bio"
-        )
+        return f"Just picked up this {item_title} for ${price_str} to wear with my {outfit}!"
+
+
+# ── Tool 4: evaluate_price_fairness ──────────────────────────────────────────
+
+def evaluate_price_fairness(target_item: dict, mock_dataset: list) -> dict:
+    """
+    Determine whether a target item is a good deal by comparing its price
+    against similar listings in the dataset (same category + shared style tags).
+
+    Args:
+        target_item:  The listing dict for the item being evaluated.
+        mock_dataset: The full list of listing dicts to compare against.
+
+    Returns:
+        A dict with keys: deal_rating, market_average, price_difference,
+        evaluation_summary.
+        Returns {"status": "error", "message": "..."} if price data is corrupt.
+
+    Deal ratings:
+        "Steal"            — priced more than 20% below market average
+        "Fair Market Value"— within 20% of market average (or no comparables)
+        "Overpriced"       — priced more than 20% above market average
+    """
+    try:
+        target_price = float(target_item["price"])
+    except (KeyError, TypeError, ValueError) as e:
+        return {"status": "error", "message": f"Could not read target item price: {e}"}
+
+    target_category = target_item.get("category", "")
+    target_tags = set(target_item.get("style_tags", []))
+    target_title = target_item.get("title", "this item")
+
+    comparable_prices = []
+    for item in mock_dataset:
+        if item is target_item:
+            continue
+        if item.get("category", "") != target_category:
+            continue
+        if not target_tags.intersection(set(item.get("style_tags", []))):
+            continue
+        try:
+            comparable_prices.append(float(item["price"]))
+        except (KeyError, TypeError, ValueError) as e:
+            return {"status": "error", "message": f"Corrupted price data for item '{item.get('id', 'unknown')}': {e}"}
+
+    if not comparable_prices:
+        return {
+            "deal_rating": "Fair Market Value",
+            "market_average": round(target_price, 2),
+            "price_difference": 0.0,
+            "evaluation_summary": (
+                f"At ${target_price:.2f}, {target_title} is a rare find with no comparable "
+                f"listings in the marketplace. Defaulting to fair market value."
+            ),
+        }
+
+    market_average = sum(comparable_prices) / len(comparable_prices)
+    price_difference = target_price - market_average
+
+    if target_price < market_average * 0.8:
+        deal_rating = "Steal"
+    elif target_price > market_average * 1.2:
+        deal_rating = "Overpriced"
+    else:
+        deal_rating = "Fair Market Value"
+
+    direction = "below" if price_difference < 0 else "above"
+    evaluation_summary = (
+        f"At ${target_price:.2f}, {target_title} is ${abs(price_difference):.2f} {direction} "
+        f"the market average of ${market_average:.2f} across {len(comparable_prices)} "
+        f"comparable listing(s). Rating: {deal_rating}."
+    )
+
+    return {
+        "deal_rating": deal_rating,
+        "market_average": round(market_average, 2),
+        "price_difference": round(price_difference, 2),
+        "evaluation_summary": evaluation_summary,
+    }

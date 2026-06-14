@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, evaluate_price_fairness
 
 # ── MOCK DATA BASELINES ───────────────────────────────────────────────────────
 
@@ -208,7 +208,67 @@ def test_create_fit_card_llm_failure_recovery_path(mock_get_client, mock_dataset
     
     caption = create_fit_card(outfit=outfit_str, new_item=target_item)
     
-    # The programmatic string fallback fallback text criteria checklist:
-    assert "thrifted this absolute gem" in caption or "just picked up this" in caption.lower()
-    assert "depop" in caption.lower()
+    # Fallback must match the plan's template: "Just picked up this [Item] for $[Price]..."
+    assert "just picked up this" in caption.lower()
     assert "19.00" in caption
+
+
+# ── TEST SUITE: TOOL 4 (evaluate_price_fairness) ──────────────────────────────
+
+def test_evaluate_price_fairness_steal(mock_dataset_fixtures):
+    """Verifies an item priced well below comparables is rated a Steal."""
+    target = {
+        "id": "lst_001",
+        "title": "Vintage Crop Tee",
+        "category": "tops",
+        "style_tags": ["vintage", "grunge"],
+        "price": 5.00,
+    }
+    result = evaluate_price_fairness(target, mock_dataset_fixtures)
+    assert result["deal_rating"] == "Steal"
+    assert result["price_difference"] < 0
+    assert "Steal" in result["evaluation_summary"]
+    assert isinstance(result["market_average"], float)
+
+
+def test_evaluate_price_fairness_overpriced(mock_dataset_fixtures):
+    """Verifies an item priced well above comparables is rated Overpriced."""
+    target = {
+        "id": "lst_002",
+        "title": "Grunge Band Tee",
+        "category": "tops",
+        "style_tags": ["vintage", "grunge"],
+        "price": 99.00,
+    }
+    result = evaluate_price_fairness(target, mock_dataset_fixtures)
+    assert result["deal_rating"] == "Overpriced"
+    assert result["price_difference"] > 0
+
+
+def test_evaluate_price_fairness_no_comparables(mock_dataset_fixtures):
+    """Verifies a unique item with no comparable listings defaults to Fair Market Value at its own price."""
+    target = {
+        "id": "lst_003",
+        "title": "Rare Kimono",
+        "category": "outerwear",
+        "style_tags": ["cottagecore", "rare"],
+        "price": 45.00,
+    }
+    result = evaluate_price_fairness(target, mock_dataset_fixtures)
+    assert result["deal_rating"] == "Fair Market Value"
+    assert result["market_average"] == 45.00
+    assert result["price_difference"] == 0.0
+    assert "rare find" in result["evaluation_summary"].lower()
+
+
+def test_evaluate_price_fairness_corrupted_price_returns_error(mock_dataset_fixtures):
+    """Verifies that a missing or corrupt price field returns a status:error dict instead of crashing."""
+    bad_target = {
+        "id": "lst_bad",
+        "title": "Broken Item",
+        "category": "tops",
+        "style_tags": ["vintage"],
+    }
+    result = evaluate_price_fairness(bad_target, mock_dataset_fixtures)
+    assert result["status"] == "error"
+    assert "message" in result
