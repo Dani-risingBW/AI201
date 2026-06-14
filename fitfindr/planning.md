@@ -54,7 +54,7 @@ A detailed suggestion of how to style the new item and other pieces from the use
 
 **What happens if it fails or returns nothing:**
 <!-- What should the agent do if the wardrobe is empty or no outfit can be suggested? -->
-If the wardrobe is empty then respond to the user telling them that a outfit cannot be suggested because you have nothing in your wardrobe and to try adding more things into your wardrobe. If no outfit can be suggested, then tell user no outfit can be suggested from the combination of the new item and the wardrobe that matches the style (if mentioned).
+If the wardrobe is empty, the tool still runs — it calls the LLM and asks for general styling inspiration instead (what types of bottoms, shoes, or accessories would pair well with the item, and what vibe it suits). This way the user always gets useful output even with no logged wardrobe. If no outfit can be suggested from the wardrobe, tell the user no outfit can be suggested from the combination of the new item and the wardrobe that matches the style (if mentioned).
 ---
 
 ### Tool 3: create_fit_card
@@ -158,7 +158,7 @@ The agent passes the chosen item and the user's wardrobe into the outfit generat
 
 IF the user's wardrobe dictionary is completely empty:
 
-The agent stops early and tells the user: "An outfit cannot be suggested because you have nothing in your wardrobe! Try adding more things to your wardrobe first."
+The tool still calls the LLM, but with a general styling prompt instead of a wardrobe-specific one. The agent surfaces those generic styling ideas to the user and notes that the suggestions are based on the item alone since no wardrobe is on file.
 
 ELSE IF the tool runs successfully but cannot find any combination of items that visually match the new piece (or match a specific requested style):
 
