@@ -4,12 +4,6 @@ app.py
 Gradio interface for FitFindr. The layout and wiring are already set up —
 your job is to fill in handle_query() so it calls run_agent() and maps
 the session results to the three output panels.
-
-Run with:
-    python app.py
-
-Then open the localhost URL shown in your terminal (usually http://localhost:7860,
-but check your terminal — the port may differ).
 """
 
 import gradio as gr
@@ -32,19 +26,57 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
         A tuple of three strings:
             (listing_text, outfit_suggestion, fit_card)
         Each string maps to one of the three output panels in the UI.
-
-    TODO:
-        1. Guard against an empty query (return early with an error message).
-        2. Select the wardrobe based on wardrobe_choice.
-        3. Call run_agent() with the query and selected wardrobe.
-        4. If session["error"] is set, return the error in the first panel
-           and empty strings for the other two.
-        5. Otherwise, format session["selected_item"] into a readable listing_text
-           string and return it along with session["outfit_suggestion"] and
-           session["fit_card"].
     """
-    # TODO: implement this function
-    return "Agent not yet implemented.", "", ""
+    # 1. Guard against an empty query (return early with an error message)
+    if not user_query or not user_query.strip():
+        return "⚠️ Error: Please type a description, size, or budget limit to start searching!", "", ""
+
+    # 2. Select the wardrobe based on wardrobe_choice
+    if wardrobe_choice == "Empty wardrobe (new user)":
+        selected_wardrobe = get_empty_wardrobe()
+    else:
+        selected_wardrobe = get_example_wardrobe()
+
+    # 3. Call run_agent() with the query and selected wardrobe
+    session = run_agent(query=user_query.strip(), wardrobe=selected_wardrobe)
+
+    # 4. If session["error"] is set, return the error in the first panel and empty strings
+    if session.get("error") is not None:
+        return f"❌ Early Exit Notice:\n\n{session['error']}", "", ""
+
+    # 5. Otherwise, format session["selected_item"] into a readable listing_text string
+    item = session.get("selected_item", {})
+    
+    # Safely building a beautifully structured item description panel format
+    title = item.get("title", "Unknown Item")
+    price = item.get("price", 0.0)
+    size = item.get("size", "N/A")
+    cond = item.get("condition", "N/A")
+    platform = item.get("platform", "Unknown")
+    desc = item.get("description", "No description provided.")
+    tags = ", ".join(item.get("style_tags", []))
+    
+    # Formulate a dynamic retry notice header if filters were relaxed during Step 1
+    retry_header = ""
+    if session.get("retry_notes"):
+        retry_header = f"⚠️ Notice: {session['retry_notes']}\n{'─' * 40}\n\n"
+
+    listing_text = (
+        f"{retry_header}"
+        f"🏷️ Title: {title}\n"
+        f"💰 Price: ${price:.2f}\n"
+        f"📏 Size: {size}\n"
+        f"✨ Condition: {cond.capitalize()}\n"
+        f"🌐 Sourced From: {platform.capitalize()}\n"
+        f"🎨 Tags: {tags}\n\n"
+        f"📝 Description:\n{desc}"
+    )
+
+    # Pull the saved strings out of session state memory for the remaining panels
+    outfit_suggestion = session.get("outfit_suggestion", "No outfit generated.")
+    fit_card = session.get("fit_card", "No caption generated.")
+
+    return listing_text, outfit_suggestion, fit_card
 
 
 # ── interface ─────────────────────────────────────────────────────────────────
