@@ -8,6 +8,8 @@ This repository contains the complete engineering pipeline, dataset configuratio
 
 [![Watch the demo](https://cdn.loom.com/sessions/thumbnails/710eab0c59c441a8be70f312a3626dec-with-play.gif)](https://www.loom.com/share/710eab0c59c441a8be70f312a3626dec)
 
+👉 **[Click here to watch the live video demo if the thumbnail above doesn't load](https://www.loom.com/share/710eab0c59c441a8be70f312a3626dec)**
+
 ---
 
 ## 1. Project Overview & Community Selection
