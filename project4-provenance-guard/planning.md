@@ -3,7 +3,6 @@
 
 ## 1. 3-Signal Detection Pipeline Design
 
-## 1. Detection Signals Pipeline
 
 ### Signal 1: Stylometric Heuristics (Sentence Length & Vocabulary Variance)
 - **What it measures:** The geometric and mechanical structure of the text. It analyzes vocabulary richness—such as the Type-Token Ratio (TTR)—and "burstiness," which calculates the standard deviation of sentence lengths. 
@@ -96,31 +95,49 @@ To protect human creators, the thresholds are intentionally asymmetrical. The bu
 ## 4. Appeals Workflow
 *Define the exact data structures and process flow when a creator contests an attribution.*
 
-- **Who can submit an appeal:** [e.g., Authenticated authors, content creators, or any submission owner]
+- **Who can submit an appeal:** Any content creator or platform author who owns the submitted piece of text and wishes to contest an automated "Likely AI" or "Uncertain / Mixed" classification.
 - **Information provided by claimant:**
-  - `[Field 1]:` [e.g., original_submission_id]
-  - `[Field 2]:` [e.g., creator_reasoning (text justification)]
-  - `[Field 3]:` [e.g., proof_of_authorship (optional link/text)]
+  - `submission_id`: A unique UUID string referencing the original content evaluation entry in the database.
+  - `creator_reasoning`: A required text string (minimum 50 characters) where the author justifies their authorship (e.g., outlining their creative process, research drafting steps, or specialized template use).
+  - `contact_email`: A validated email string to notify the creator once the human review determination is finalized or to request further operational clarification.
 - **System Actions on Receipt:**
-  - **Status Changes:** [What state does the record transition to? e.g., `Classified` $\rightarrow$ `Under Review`]
-  - **Audit Log Actions:** [What specific event keys and fields get appended to the structured JSON audit log?]
+  - **Status Changes:** The database record for the targeted `submission_id` instantly changes its state from `Classified` $\rightarrow$ `Under Review`.
+  - **Audit Log Actions:** An atomic, immutable JSON entry is appended to the structured system audit log using the event key `APPEAL_RECEIVED`. The log record schema explicitly captures:
+    ```json
+    {
+      "event_type": "APPEAL_RECEIVED",
+      "timestamp": "2026-06-29T16:32:00Z",
+      "submission_id": "8f3b2c9d-11e5-4a7b-a25c",
+      "contact_email": "creator@example.com",
+      "meta": {
+        "original_classification": "likely_ai",
+        "original_ensemble_score": 0.842,
+        "creator_reasoning_length": 245
+      }
+    }
+    ```
 - **Human Reviewer Queue Interface:**
-  - *When a reviewer opens the queue, they will see:*
-    1. [Item 1]
-    2. [Item 2]
-    3. [Item 3]
+  - *When a reviewer opens the moderation queue dashboard, they will see a structured workspace displaying:*
+    1. **Contextual Metadata Panel:** The unique `submission_id`, the verified **`contact_email`** (enabling direct reviewer outreach for follow-up questions), the duration the appeal has been sitting in the queue, and the original automated classification tier.
+    2. **Side-by-Side Content & Signal Analysis:** The full raw submitted text highlighting areas where the system misidentified patterns, alongside a breakdown of individual pipeline scores ($S_{\text{stylometric}}$, $S_{\text{llm}}$, $S_{\text{density}}$) to expose exactly which signal triggered the false flag.
+    3. **Creator Justification & Resolution Controls:** The plain-text `creator_reasoning` statement, flanked by action controls allowing the reviewer to either **Uphold Classification** or **Overrule to Human** (which shifts the database status to `Verified Human` and updates the platform badge).
 
 ---
 
 ## 5. Anticipated Edge Cases
 *Identify specific content types where the heuristic pipeline will struggle.*
 
-- **Edge Case 1 (False Positive AI):**
-  - **Scenario Description:** [e.g., A poem with high structural repetition, rigid meter, and basic vocabulary.]
-  - **Why signals fail:** [Explain how specific signals misinterpret this text as machine-generated.]
-- **Edge Case 2 (False Negative Human):**
-  - **Scenario Description:** [e.g., Technical programming blogs or heavily edited professional text with extreme structural variation.]
-  - **Why signals fail:** [Explain why the pipeline will incorrectly classify or mark this as uncertain.]
+- **Edge Case 1 (False Positive AI - Human Work Misclassified as AI):**
+  - **Scenario Description:** A highly structured traditional poem (e.g., a villanelle or a pantoum) written by a human creator that relies on strict, rigid meter, a repetitive rhyme scheme, and simple, foundational vocabulary.
+  - **Why signals fail:** - **Signal 1 (Stylometric Heuristic)** will output a maximum AI score (~1.0) because the sentence length variance is non-existent and the vocabulary diversity (Type-Token Ratio) is incredibly low due to the intentional poetic repetition. 
+    - **Signal 3 (Semantic Density)** will also misfire and output a high AI score (~0.90) because the circular phrasing and repetitive artistic loops look exactly like an auto-regressive model stuck in a generation loop. 
+    - Because two out of three signals aggressively align at the extreme top end, they overrule the LLM classifier, dragging the final ensemble score past the $0.75$ threshold and erroneously displaying the "High-Confidence AI" transparency label on original art.
+
+- **Edge Case 2 (False Negative Human - AI Work Misclassified as Human):**
+  - **Scenario Description:** An AI-generated technical programming blog post or highly optimized software documentation guide created using an explicit engineering prompt (e.g., *"Write a detailed technical guide with extreme structural variation, code snippets, and conversational industry anecdotes"*).
+  - **Why signals fail:** - **Signal 3 (Semantic Density)** will fail completely and return a low, human-like score (~0.15) because a technical documentation prompt naturally forces the inclusion of an exceptionally high density of unique nouns, proper programmatic methods, and distinct factual code entities. 
+    - **Signal 1 (Stylometric Heuristic)** will also be tricked into a human classification (~0.20) because the inclusion of raw code snippets alternating with prose artificially spikes the sentence length standard deviation (burstiness). 
+    - Despite the text being completely synthetic, these structural and factual distortions mathematically drag the final calibrated ensemble score below $0.35$, causing the system to mistakenly grant it a "Verified Human" transparency certificate.
 
 ---
 
@@ -213,3 +230,80 @@ To protect human creators, the thresholds are intentionally asymmetrical. The bu
 
 ### Flow Narrative
 The content submission flow begins when a user submits text to the `POST /api/submit` endpoint protected by a rate-limiting layer, triggering the parallel execution of the structural, LLM-based, and semantic density signals to compute a calibrated ensemble confidence score. Once the pipeline builds the calibrated transparency label schema, it simultaneously commits the evaluation data to a local database and registers a structured entry in the system audit log. Creators can contest any classification via the `POST /api/appeal` endpoint, which writes an appeal event to the log, updates the internal database entry status to `"under review"`, and instantly flags the record for priority human moderation in the evaluation queue.
+
+---
+
+## 7. AI Tool Plan
+*Scaffolding parameters for generating implementation code using large language models.*
+
+### Milestone 3: Submission Endpoint & First Signal
+- **Spec Sections Provided:** `Section 1 (Signal 1 Spec: Stylometric Heuristics)`, `Section 6 (Architecture Block: Workflow Diagram & Narrative)`
+- **Prompt Deliverables:** Ask the AI tool to generate a Python Flask application skeleton including the boilerplate error handling, SQLite/in-memory database initialization, `POST /api/submit` routing with structural JSON payload validation, and the standalone Python function executing `Signal 1` (calculating Type-Token Ratio and sentence length standard deviation locally).
+- **Verification Plan:** Verify by passing 3 distinct raw text blocks (a short story excerpt, a repetitive block, and a structured prose sample) directly into the standalone stylometric signal function via a local execution script before hooking it up to the API route, confirming that the output outputs a clean mathematical metric.
+
+### Milestone 4: Second & Third Signals + Confidence Scoring
+- **Spec Sections Provided:** `Section 1 (Full 3-Signals Spec & Weights)`, `Section 2 (Uncertainty Representation & Calibration Logic)`, `Section 6 (Architecture Workflow Diagram)`
+- **Prompt Deliverables:** Ask the AI tool to write the standalone Python function for `Signal 2` (connecting securely to the Groq API using a fast model like `llama-3.3-70b-versatile` to capture synthetic tone) and `Signal 3` (evaluating keyword/entity structural density loops). Instruct it to implement the mathematical scoring formula, the sigmoid calibration function, and the conflict-based dampening checks that funnel severe signal disagreement safely toward the $0.50$ baseline.
+- **Verification Plan:** Submit an identical, highly creative original human text block and an over-stylized, repetitive machine-generated paragraph to the pipeline. Verify that the final calculated ensemble scores vary meaningfully across the threshold boundaries, ensuring clear AI-generated data logs a score $>0.75$ and distinct human text scores safely below $0.35$.
+
+### Milestone 5: Production Layer (Labels, Appeals, & Logs)
+- **Spec Sections Provided:** `Section 3 (Transparency Label Design)`, `Section 4 (Appeals Workflow)`, `Section 6 (Architecture Workflow Diagram)`
+- **Prompt Deliverables:** Ask the AI tool to build the helper functions returning the exact string literals for all three transparency label variants based on the classification ranges. Instruct it to implement the `POST /api/appeal` endpoint to accept a `submission_id`, a `creator_reasoning` string, and a `contact_email`, update the database status row atomically to `"under review"`, and construct an atomic append mechanism that captures the complete event payload (including creator email) in the structured JSON audit log file.
+- **Verification Plan:** Verify by manually adjusting system evaluation scores to confirm that all three distinct plain-language label variants are correctly generated and reachable via the response schema. Execute an appeal request against an existing database entry to verify that its row status updates flawlessly, and assert that the structured audit log records a fully populated `APPEAL_RECEIVED` object containing the creator's contact information.
+
+## 8. Stretch Features Specification
+
+### Feature 1: Ensemble Detection Pipeline (Core Component Upgrade)
+* **Status:** **Fully Integrated**
+* **Implementation Strategy:** Upgraded the minimum pipeline requirements from 2 signals to an advanced 3-signal setup by incorporating a localized Semantic Consistency & Fact-Density Heuristic ($S_3$). This utilizes a formal weighted aggregation formula ($25\%$ Stylometric, $45\%$ Groq LLM, $30\%$ Semantic Density) alongside a conflict-dampening calibration layer to protect creators against aggressive false flags.
+
+### Feature 2: Provenance Certificate ("Verified Human" Credential)
+* **What it is:** A secure, platform-backed verification status appended to a creator's submission payload once they successfully verify their baseline human authorship. This bypasses automated ambiguity for that specific piece of work and rewards creators with a trusted credential badge visible to platform readers.
+* **Earned By:** Creators can earn this certificate under two conditions: (1) Passing a successful manual human review via the appeals workflow queue, or (2) Authenticating their drafting sequence via session telemetry hooks during text composition.
+* **UI Representation & Response Schema:** When earned, the system appends a `"provenance_certificate"` object into the transparency label meta layout.
+  ```json
+  "provenance_certificate": {
+    "is_verified_human": true,
+    "certificate_id": "cert_uuid_99b1a8c2",
+    "verification_method": "human_appeal_overrule",
+    "display_badge_text": "✓ Verified Original Human Content"
+  }
+
+### Feature 3: Live System Analytics Dashboard
+
+## 1. Feature Architecture Overview
+The Live System Analytics Dashboard is an isolated administrative endpoint (`GET /api/analytics`) that aggregates operational records out of the SQLite/Memory database to track system execution patterns, appeal trajectories, and model alignment characteristics. This endpoint operates as an executive monitoring system to verify that the asymmetrical threshold calibration is effectively minimizing false positives over time.
+
+## 2. Core Metrics Computed & Business Logic
+The analytics engine queries database records to dynamically compile three operational metrics:
+
+1. **Distribution Patterns:** - *Logic:* Computes the rolling percentages of total processed documents classified into each of the three threshold zones (*Likely Human*, *Uncertain/Mixed*, or *Likely AI*). 
+   - *Purpose:* Monitors whether the system's classifications align with expected platform usage trends or if systemic drift is shifting classifications abnormally toward an extreme.
+
+2. **Contestation Rate (Appeal Rate):** - *Logic:* Calculates the exact percentage of high-risk designations (*Likely AI* and *Uncertain/Mixed*) that are actively contested by creators using the `POST /api/appeal` endpoint. 
+   - *Formula:* `(Total Appeal Submissions) / (Total Likely AI + Total Uncertain Content) * 100`
+
+3. **Signal Variance Rate (System Conflict Flag):** - *Logic:* Tracks the frequency and percentage of submissions where the local mechanical math heuristics and the Groq LLM API responses fiercely contradict one another (defined as an absolute mathematical distance $|S_{\text{llm}} - S_{\text{stylometric}}| > 0.6$).
+   - *Purpose:* Measures how frequently the conflict-based calibration engine successfully steps in to pull a borderline record out of a false-positive state into the protective "Uncertain" buffer zone.
+
+## 3. Production JSON Response Schema
+When requested by an authorized client or internal administration portal, the `GET /api/analytics` surface area returns a clean, fully compiled structural object:
+
+```json
+{
+  "total_processed_submissions": 1420,
+  "distribution_patterns": {
+    "likely_human_percentage": 62.4,
+    "uncertain_mixed_percentage": 24.1,
+    "likely_ai_percentage": 13.5
+  },
+  "appeals_telemetry": {
+    "total_appeals_submitted": 54,
+    "active_contestation_rate": "10.15%"
+  },
+  "system_health": {
+    "signal_variance_dampening_triggers": 42,
+    "heuristic_llm_conflict_rate": "2.95%"
+  }
+}
+```
