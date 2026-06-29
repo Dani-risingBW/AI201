@@ -17,11 +17,9 @@ ID_MAP = {0: "Question/Opinion", 1: "AI_Info/News"}
 
 SAMPLE_POSTS = [
     (
-        "Title: If one of the issues with Data Centers is water usage why not use desalination?\n"
-        "Body: If one of the issues with Data Centers is water usage, why not incorporate desalination "
-        "into the water cooling systems and build the data centers near the ocean or other major sources "
-        "of salt water. Not only could this help reduce pressure on freshwater supplies, but it could "
-        "also provide desalinated water as a byproduct for local communities."
+        "Title: 1 in 5 Americans believe AI systems will become more powerful than governments, new poll finds\n"
+        "Body:My colleagues at Johns Hopkins and I ran a national survey on AI attitudes and some of the results are quite surprising. Check out a write-up here."  
+        "[https://hub.jhu.edu/2026/06/15/americans-strongly-support-regulations-on-ai/](https://hub.jhu.edu/2026/06/15/americans-strongly-support-regulations-on-ai/)"
     ),
     (
         "Title: Trump tells Axios he no longer views Anthropic as national security threat\n"
