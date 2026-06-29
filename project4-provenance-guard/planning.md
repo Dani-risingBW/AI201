@@ -73,23 +73,23 @@ To protect human creators, the thresholds are intentionally asymmetrical. The bu
 - **Managing False Negatives (AI slipping through):** A sophisticated AI prompt that successfully mimics human sentence length variance might trick the stylometric signal ($S_1 = 0.20$). However, because the Groq LLM classifier ($S_2$) and semantic density ($S_3$) carry a combined weight of $75\%$, a high AI reading from them will still drag the final score safely into the $0.50 - 0.65$ **Uncertain** bracket. It won't get a clean "Likely Human" pass, forcing transparency.
 ---
 
-## 3. Transparency Label Design
+### 3. Transparency Label Design
 *Write out the exact text variants that will be returned by the API and displayed to non-technical users.*
 
 ### Variant A: High-Confidence AI Result
-- **Trigger Condition:** [Specify score threshold condition]
-- **Exact Label Text:** > "[Insert exact plain-language text here]"
-- **Context/Explanation provided to reader:** [How does it communicate the AI origin transparently?]
+- **Trigger Condition:** Combined Ensemble Confidence Score $> 0.75$ ($0.76 \le \text{Score} \le 1.00$)
+- **Exact Label Text:** > "Attribution: Automated Content. Our system has identified highly predictable structural arrangements, repetitive sentence geometries, and linguistic patterns characteristic of AI-generated text."
+- **Context/Explanation provided to reader:** This label explicitly communicates an artificial origin without being confrontational. It provides non-technical readers with an objective explanation of *why* it was flagged (predictable structures and uniform sentence shapes) so they understand the determination is based on measurable stylistic mechanics, not an arbitrary guess.
 
 ### Variant B: High-Confidence Human Result
-- **Trigger Condition:** [Specify score threshold condition]
-- **Exact Label Text:** > "[Insert exact plain-language text here]"
-- **Context/Explanation provided to reader:** [How does it communicate human origin transparently?]
+- **Trigger Condition:** Combined Ensemble Confidence Score $< 0.35$ ($0.00 \le \text{Score} < 0.35$)
+- **Exact Label Text:** > "Attribution: Verified Human Content. This text exhibits natural language variance, expressive structural burstiness, and contextual transitions characteristic of original human authorship."
+- **Context/Explanation provided to reader:** This label provides positive validation for authentic human writing. It explains that the text displays "structural burstiness" and natural pacing variations in plain language, reassuring readers that the writing carries the stylistic fingerprints of genuine human thought and composition.
 
 ### Variant C: Uncertain / Mixed Result
-- **Trigger Condition:** [Specify score threshold condition]
-- **Exact Label Text:** > "[Insert exact plain-language text here]"
-- **Context/Explanation provided to reader:** [How does it explain the ambiguity to a non-technical reader?]
+- **Trigger Condition:** Combined Ensemble Confidence Score between $0.35$ and $0.75$ ($0.35 \le \text{Score} \le 0.75$)
+- **Exact Label Text:** > "Attribution: Indeterminate / Mixed Content. Our system detected conflicting structural signals. This text may contain a mixture of human editing and AI assistance, or it may follow a rigid technical layout that prevents a definitive classification."
+- **Context/Explanation provided to reader:** This label serves as our crucial safety buffer. Instead of forcing a false classification on borderline text, it transparently admits the ambiguity to the reader. It explains that highly structured human templates (like coding blogs or formal essays) or heavily edited AI texts can confuse the system, reassuring creators that the platform prefers transparency over inaccurate accusations.
 
 ---
 
@@ -128,40 +128,88 @@ To protect human creators, the thresholds are intentionally asymmetrical. The bu
 *System reference block for code generation and cross-milestone alignment.*
 
 ### Workflow Diagram (ASCII)
+
 ```text
-  [ Creator Content Submission ]
-                 │
-                 ▼
-     ┌───────────────────────┐
-     │  POST /api/submit     │ <─── Rate Limiter (Flask-Limiter)
-     └───────────┬───────────┘
-                 │
-                 ▼
-     ┌───────────────────────┐
-     │  Detection Pipeline   │ ───► Run Signal 1 Heuristics
-     │  & Scoring Engine     │ ───► Run Signal 2 Heuristics
-     └───────────┬───────────┘
-                 │
-                 ▼
-     ┌───────────────────────┐
-     │ Transparency Label    │ ───► Append Label JSON Meta
-     │   & Schema Builder    │
-     └───────────┬───────────┘
-                 │
-                 ├──────────────────────────────┐
-                 ▼                              ▼
-     ┌───────────────────────┐      ┌───────────────────────┐
-     │ SQLite / Memory DB    │      │  Structured Audit Log │
-     │  (Store Classification)│      │  (Append Event Log)   │
-     └───────────▲───────────┘      └───────────────────────┘
-                 │
-         [ Creator Appeal ]
-                 │
-                 ▼
-     ┌───────────────────────┐
-     │  POST /api/appeal     │ ───► Update Status: "Under Review"
-     └───────────────────────┘ ───► Write Appeal Log Entry
+========================================================================================
+(1) SUBMISSION FLOW
+========================================================================================
+
+  [ Creator Content ] 
+           │
+           │ (JSON Payload: raw text)
+           ▼
+   ┌───────────────┐
+   │  POST/submit  │ <─── [ Rate Limiter (Flask-Limiter) ]
+   └───────┬───────┘
+           │
+           │ (Cleaned Raw Text)
+           ▼
+   ┌────────────────────────────────────────────────────────┐
+   │                  Detection Pipeline                    │
+   │                                                        │
+   │  ┌───────────┐      ┌───────────┐      ┌───────────┐   │
+   │  │ Signal 1  │      │ Signal 2  │      │ Signal 3  │   │
+   │  │ (Stylom.) │      │  (Groq)   │      │ (Density) │   │
+   │  └─────┬─────┘      └─────┬─────┘      └─────┬─────┘   │
+   └────────│──────────────────│──────────────────│─────────┘
+            │                  │                  │
+            └──────────┬───────┴──────────┬───────┘
+                       │                  │
+                       │ (Signal Scores: S1, S2, S3)
+                       ▼
+   ┌──────────────────────────────────────────────┐
+   │      Scoring Engine & Calibration            │
+   │  - Applies Sigmoid & Dampening Formula       │
+   └───────────────────┬──────────────────────────┘
+                       │
+                       │ (Combined Score: 0.0 - 1.0)
+                       ▼
+   ┌──────────────────────────────────────────────┐
+   │     Transparency Label & Schema Builder      │
+   │  - Generates UI text based on score range    │
+   └───────────────────┬──────────────────────────┘
+                       │
+                       │ (Combined Score + Generated Label Text)
+                       ├────────────────────────────────────────┐
+                       ▼                                        ▼
+   ┌──────────────────────────────────────┐          ┌──────────────────────┐
+   │         SQLite / Memory DB           │          │ Structured Audit Log │
+   │  - Stores Text, Score, & Label Text  │          │ - Appends Event Log  │
+   └──────────────────────────────────────┘          └──────────────────────┘
+                       │
+                       │ (JSON Response: Score, Label Text, Classification)
+                       ▼
+               [ Client API Response ]
+
+
+========================================================================================
+(2) APPEAL FLOW
+========================================================================================
+
+  [ Creator Contest Request ]
+           │
+           │ (JSON Payload: submission_id, reasoning)
+           ▼
+   ┌───────────────┐
+   │  POST/appeal  │
+   └───────┬───────┘
+           │
+           │ (Validated ID & Reason)
+           ▼
+   ┌──────────────────────────────────────┐
+   │          SQLite / Memory DB          │ ───► Updates Status to: "Under Review"
+   └───────────────────┬──────────────────┘
+                       │
+                       │ (Logged State Metas)
+                       ▼
+   ┌──────────────────────────────────────┐
+   │        Structured Audit Log          │ ───► Appends Review Queue Flag
+   └───────────────────┬──────────────────┘
+                       │
+                       │ (JSON Response: status: "under review", logged: true)
+                       ▼
+               [ Client API Response ]
 ```
 
 ### Flow Narrative
-The content submission flow begins when a user submits text to the `POST /api/submit` endpoint, passing through a rate-limiting layer. The pipeline executes independent heuristic signal functions, aggregates their outputs mathematically into a 0.0–1.0 score, constructs a plain-language transparency label, saves the result to the local database, and commits a record to the structured audit log. The appeals flow is triggered via `POST /api/appeal`, where a creator submits their reason for contesting a decision; the system logs the context, updates the record's status to `"under review"`, and surfaces the transaction to the human evaluation queue.
+The content submission flow begins when a user submits text to the `POST /api/submit` endpoint protected by a rate-limiting layer, triggering the parallel execution of the structural, LLM-based, and semantic density signals to compute a calibrated ensemble confidence score. Once the pipeline builds the calibrated transparency label schema, it simultaneously commits the evaluation data to a local database and registers a structured entry in the system audit log. Creators can contest any classification via the `POST /api/appeal` endpoint, which writes an appeal event to the log, updates the internal database entry status to `"under review"`, and instantly flags the record for priority human moderation in the evaluation queue.
