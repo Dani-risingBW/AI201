@@ -8,6 +8,8 @@
 
 ## ⚡ Quick Start: How to Test
 
+**📹 [Watch the Demo](https://www.loom.com/share/c186b1ef25854a1ba5a97763cbaab5e7)** — 5-minute walkthrough of the system in action
+
 ### Fastest Way (2 minutes)
 
 **Terminal 1 - Start Flask app:**
