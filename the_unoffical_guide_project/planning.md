@@ -33,6 +33,8 @@ I chose to create an unofficial guide through Howard University administration. 
 | 10 |Howard Forms |The Office of the Registrar's repository of official forms (enrollment, registration, records changes, verification) detailing which document each academic process requires. |https://howard.edu/registrar/forms |
 | 11 |Howard TikTok Advice |The #howarduniversity TikTok feed, an unofficial source of short-form student-generated tips, campus culture, and lived-experience advice not found in official documentation. |https://www.tiktok.com/tag/howarduniversity |
 | 12 |Rate my professor |Get student feedback on the course, rigor, and character of professors |https://www.ratemyprofessors.com/|
+| 13 | Undergraduate & Graduate Student Documents and Forms in relation to financial aid support like grants, loans, billing and payment, standard documents, HEERP documents, and online programs and professional student documents | Web page | https://financialservices.howard.edu/documents-forms|
+
 ---
 
 ## Chunking Strategy

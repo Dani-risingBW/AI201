@@ -1,24 +1,31 @@
 """Milestone 3 — ingestion & chunking pipeline for The Unofficial Guide.
 
-Loads the 12 designated sources (local Reddit JSON, live web pages, a PDF,
-a short-form transcript, and Rate My Professor), persists each ingested source
-to documents/, then chunks everything with RecursiveCharacterTextSplitter.
+Loads the 13 designated sources (local Reddit JSON, live web pages, a PDF,
+a short-form transcript, and Rate My Professor), crawls and extracts linked PDF forms,
+persists each ingested source to documents/, chunks everything with RecursiveCharacterTextSplitter,
+and builds an indexed ChromaDB vector store.
 """
 
 import os
 import io
 import re
 import json
+from urllib.parse import urljoin, urlparse
 import requests
 import pdfplumber
 from bs4 import BeautifulSoup
+
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 
 # ==========================================
 # 0. PATHS (resolve relative to this file so the pipeline runs from anywhere)
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOCUMENTS_DIR = os.path.join(BASE_DIR, "documents")
+CHROMA_DIR = os.path.join(BASE_DIR, "chroma_db")
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 # ==========================================
@@ -40,26 +47,22 @@ SOURCES = {
     "9_distance_contacts": "https://online.howard.edu/admitted/important-contacts/",
     "10_registrar_forms": "https://howard.edu/registrar/forms",
     "11_tiktok_advice": "MOCK_TIKTOK_TRANSCRIPT_11",  # Handled via short-form speech proxy
-    "12_rate_my_professor": "Howard University Faculty"  # Trigger for RMP API pipeline
+    "12_rate_my_professor": "Howard University Faculty",  # Trigger for RMP API pipeline
+    "13_student_documents": "https://financialservices.howard.edu/documents-forms"
 }
 
+# Sources that contain links to external downloadable PDF forms we want to recursively crawl
+SOURCES_TO_CRAWL_FOR_PDFS = ["7_finaid_landing", "10_registrar_forms", "13_student_documents"]
+
 # --- Source 12: Rate My Professor selection ---
-# (a) Explicit names — looked up individually (use the exact RMP spelling).
-#     Add as many names as you like; each is fetched and added to source 12.
 PROFESSORS_TO_SCRAPE = ["Legand Burge"]
-# (b) Automatic top-N — also pull the N highest-ranked Howard professors with no
-#     names needed. Set RMP_TOP_N = 0 to disable and use only the list above.
 RMP_TOP_N = 5
 RMP_POOL_SIZE = 300          # candidate professors fetched, then ranked locally
 RMP_MIN_RATINGS = 5          # ignore sparsely-rated profs when picking top-N
 RMP_RANK_BY = "most_rated"   # "most_rated" (numRatings) or "highest_rated" (avgRating)
 
 # --- Source 11: TikTok short-form media ---
-# Add one or more real #howarduniversity TikTok video URLs to transcribe them
-# live with yt-dlp + faster-whisper. Each video is transcribed and tagged with
-# its own URL. Leave the list empty to fall back to the cached transcript.
 TIKTOK_URLS = [
-    # "https://www.tiktok.com/@username/video/1234567890123456789",
     "https://www.tiktok.com/@ssanyuspeaks/video/7530062510569884942",
     "https://www.youtube.com/watch?v=6LeI1AlZGek",
     "https://www.tiktok.com/@ssanyuspeaks/video/7527812876464082189?utm_campaign=&utm_source=unknown&refer=player_v1&referrer_url=https%3A%2F%2Fwww.tiktok.com%2Fembed%2Fv3%2F7527812876464082189%3F%26autoplay%3D1&referer_video_id=7527812876464082189",
@@ -69,25 +72,21 @@ TIKTOK_URLS = [
     "https://www.tiktok.com/@ssanyuspeaks/video/7587096506457443639",
     "https://www.tiktok.com/@ssanyuspeaks/video/7568541420085120269",
     "https://www.tiktok.com/@ssanyuspeaks/video/7536632597468728631",
-    "https://www.bing.com/videos/riverview/relatedvideo?q=tiktok+howard+university+financial+aid&qft=+filterui%3afilterhint-shortvideo&mid=DAE2CF16B4649FE4D909DAE2CF16B4649FE4D909&churl=https%3a%2f%2fwww.youtube.com%2fchannel%2fUC1VKVKhJLc7PjdPPVxTDk0Q&mmscn=stvo&ru=%2fvideos%2fsearch%3fview%3dshortvideo%26qft%3d%2bfilterui%3afilterhint-shortvideo%26q%3dtiktok%2bhoward%2buniversity%2bfinancial%2baid%26FORM%3dSVFBT&mcid=2111DD2AB2F543A7A749D4F5D1410187&FORM=VRDGAR",
 ]
-WHISPER_MODEL_SIZE = "base"  # tiny | base | small (larger = more accurate, slower)
+WHISPER_MODEL_SIZE = "base"
 
 # ==========================================
-# 2. RATE MY PROFESSOR INGESTION MODULE (direct GraphQL — the pip library is broken)
+# 2. RATE MY PROFESSOR INGESTION MODULE
 # ==========================================
-# RMP exposes a public read-only GraphQL endpoint. The library `RateMyProfessorAPI`
-# no longer authenticates against it, so we query it directly with the public token.
 RMP_GRAPHQL_URL = "https://www.ratemyprofessors.com/graphql"
 RMP_HEADERS = {
-    "Authorization": "Basic dGVzdDp0ZXN0",  # RMP's public read-only basic-auth token
+    "Authorization": "Basic dGVzdDp0ZXN0",
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (HowardGuideBot Educational Project)",
 }
-HOWARD_SCHOOL_ID = "U2Nob29sLTQyMQ=="  # base64 of "School-421" = Howard University
+HOWARD_SCHOOL_ID = "U2Nob29sLTQyMQ=="
 
 def _rmp_query(query: str, variables: dict) -> dict:
-    """Posts a GraphQL query to RMP and returns the parsed JSON."""
     resp = requests.post(
         RMP_GRAPHQL_URL, headers=RMP_HEADERS,
         json={"query": query, "variables": variables}, timeout=20
@@ -95,13 +94,11 @@ def _rmp_query(query: str, variables: dict) -> dict:
     resp.raise_for_status()
     return resp.json()
 
-# Field set shared by name-lookup and top-N pool queries.
 _TEACHER_FIELDS = (
     "id firstName lastName department avgRating avgDifficulty numRatings wouldTakeAgainPercent"
 )
 
 def _lookup_teacher_by_name(name: str):
-    """Finds a single Howard professor node by name (first match), or None."""
     q = (
         "query T($q: TeacherSearchQuery!){ newSearch{ teachers(query: $q){ edges{ node{ "
         + _TEACHER_FIELDS + " } } } } }"
@@ -118,7 +115,6 @@ def _lookup_teacher_by_name(name: str):
     return edges[0]["node"]
 
 def _fetch_top_teachers(n: int, pool_size: int, min_ratings: int, rank_by: str):
-    """Fetches a pool of Howard professors and returns the top-n ranked nodes."""
     q = (
         "query P($q: TeacherSearchQuery!, $n: Int!){ newSearch{ teachers(query: $q, first: $n){ "
         "edges{ node{ " + _TEACHER_FIELDS + " } } } } }"
@@ -131,16 +127,14 @@ def _fetch_top_teachers(n: int, pool_size: int, min_ratings: int, rank_by: str):
         print(f"  RMP top-N pool request failed: {e}")
         return []
 
-    # Only rank professors with enough reviews to be meaningful.
     nodes = [t for t in nodes if (t.get("numRatings") or 0) >= min_ratings]
     if rank_by == "highest_rated":
         nodes.sort(key=lambda t: (t.get("avgRating") or 0, t.get("numRatings") or 0), reverse=True)
-    else:  # "most_rated"
+    else:
         nodes.sort(key=lambda t: (t.get("numRatings") or 0, t.get("avgRating") or 0), reverse=True)
     return nodes[:n]
 
 def _format_professor_dossier(node: dict) -> str:
-    """Builds the dossier text (metrics + student comments) for one professor."""
     ratings_query = (
         "query R($id: ID!){ node(id: $id){ ... on Teacher{ ratings(first: 20){ edges{ node{ "
         "class comment clarityRating difficultyRating wouldTakeAgain date "
@@ -155,7 +149,6 @@ def _format_professor_dossier(node: dict) -> str:
     if wta is not None and wta >= 0:
         text += f"Would Take Again: {round(wta, 1)}%\n"
 
-    # Append individual textual evaluations
     text += "Student Comments & Evaluations:\n"
     try:
         rdata = _rmp_query(ratings_query, {"id": node["id"]})
@@ -172,18 +165,10 @@ def _format_professor_dossier(node: dict) -> str:
     return text
 
 def scrape_ratemyprofessor_data(target_professors, top_n: int = RMP_TOP_N) -> str:
-    """
-    Queries Rate My Professors' GraphQL API for Howard University (School-421).
-    Combines (a) any explicitly named professors with (b) the automatic top-N
-    ranked Howard professors, de-duplicates them, and compiles metrics +
-    student comments for chunk injection.
-    """
     print("Connecting to RateMyProfessors GraphQL API...")
-
-    selected = []        # ordered list of teacher nodes
+    selected = []
     seen_ids = set()
 
-    # (a) Explicit names first (exact RMP spelling)
     for prof_name in target_professors:
         print(f"Looking up named professor: {prof_name}...")
         node = _lookup_teacher_by_name(prof_name)
@@ -191,7 +176,6 @@ def scrape_ratemyprofessor_data(target_professors, top_n: int = RMP_TOP_N) -> st
             selected.append(node)
             seen_ids.add(node["id"])
 
-    # (b) Automatic top-N Howard professors
     if top_n and top_n > 0:
         print(f"Fetching top {top_n} Howard professors (ranked by {RMP_RANK_BY})...")
         for node in _fetch_top_teachers(top_n, RMP_POOL_SIZE, RMP_MIN_RATINGS, RMP_RANK_BY):
@@ -208,10 +192,9 @@ def scrape_ratemyprofessor_data(target_professors, top_n: int = RMP_TOP_N) -> st
     return compiled_rmp_data
 
 # ==========================================
-# 3. OTHER LOADER MODULES (Reddit, Web, Media)
+# 3. LOADER & RECURSIVE PDF MODULES
 # ==========================================
 def parse_local_reddit_json(file_path: str) -> str:
-    """Reads a local downloaded Reddit .json file and extracts text."""
     if not os.path.exists(file_path):
         return "Mock Reddit Content: Current financial aid holds require walk-ins at the administration building before 3:15 PM."
 
@@ -227,7 +210,6 @@ def parse_local_reddit_json(file_path: str) -> str:
     return compiled_text
 
 def scrape_and_clean_web(url: str) -> str:
-    """Fetches web HTML, strips template noise, and returns plain text."""
     headers = {"User-Agent": "HowardGuideBot/1.0 (Educational Project context)"}
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -243,14 +225,74 @@ def scrape_and_clean_web(url: str) -> str:
         print(f"Failed parsing {url}: {e}")
         return ""
 
-def transcribe_tiktoks(urls) -> str:
-    """Downloads and transcribes one or more TikTok videos with yt-dlp +
-    faster-whisper (matches the planning.md media pipeline). Each transcript is
-    tagged with its source URL and concatenated.
+def scrape_pdf(url: str) -> str:
+    """Downloads a PDF and extracts text using pdfplumber."""
+    headers = {"User-Agent": "HowardGuideBot/1.0 (Educational Project context)"}
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code != 200:
+            return f"Placeholder content for inaccessible PDF: {url}"
 
-    Returns the combined transcript text, or "" if nothing succeeds so the
-    caller can fall back to the cached snapshot (Option E reproducibility).
-    """
+        pages = []
+        with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text and text.strip():
+                    pages.append(text)
+
+        return re.sub(r'\s+', ' ', "\n".join(pages)).strip()
+    except Exception as e:
+        print(f"Failed parsing PDF {url}: {e}")
+        return ""
+
+def crawl_linked_pdfs_from_page(source_id: str, page_url: str) -> list[Document]:
+    """Finds all PDF links on a page, downloads and parses them with metadata."""
+    headers = {"User-Agent": "HowardGuideBot/1.0 (Educational Project context)"}
+    extracted_docs = []
+
+    try:
+        response = requests.get(page_url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            return []
+        soup = BeautifulSoup(response.text, "html.parser")
+    except Exception as e:
+        print(f"Failed fetching links from {page_url}: {e}")
+        return []
+
+    seen_urls = set()
+    for a_tag in soup.find_all("a", href=True):
+        full_url = urljoin(page_url, a_tag["href"].strip())
+        parsed = urlparse(full_url)
+
+        if parsed.path.lower().endswith(".pdf") and full_url not in seen_urls:
+            seen_urls.add(full_url)
+            link_title = a_tag.get_text(strip=True) or os.path.basename(parsed.path)
+            print(f"  -> Found linked PDF: {link_title} ({full_url})")
+
+            pdf_text = scrape_pdf(full_url)
+            if pdf_text:
+                # Save each discovered PDF to documents/
+                safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', link_title)[:50]
+                pdf_filename = f"{source_id}_form_{safe_slug}.txt"
+                with open(os.path.join(DOCUMENTS_DIR, pdf_filename), "w", encoding="utf-8") as f:
+                    f.write(pdf_text)
+
+                extracted_docs.append(
+                    Document(
+                        page_content=pdf_text,
+                        metadata={
+                            "source_origin": source_id,
+                            "parent_page": page_url,
+                            "pdf_url": full_url,
+                            "title": link_title,
+                            "type": "linked_pdf_form"
+                        }
+                    )
+                )
+
+    return extracted_docs
+
+def transcribe_tiktoks(urls) -> str:
     urls = [u for u in (urls or []) if u]
     if not urls:
         return ""
@@ -261,7 +303,6 @@ def transcribe_tiktoks(urls) -> str:
     from yt_dlp.networking.impersonate import ImpersonateTarget
     from faster_whisper import WhisperModel
 
-    # Load the model once and reuse it across all videos.
     print(f"  Loading faster-whisper ({WHISPER_MODEL_SIZE})...")
     model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
 
@@ -269,10 +310,6 @@ def transcribe_tiktoks(urls) -> str:
     for url in urls:
         tmpdir = tempfile.mkdtemp(prefix="tiktok_")
         ydl_opts = {
-            # TikTok's "download" format carries real audio (its default h265
-            # streams are video-only); YouTube has no such format and falls
-            # through to bestaudio. Impersonation is required for TikTok to
-            # serve the audio-bearing format (needs curl_cffi installed).
             "format": "download/bestaudio/best",
             "outtmpl": os.path.join(tmpdir, "audio.%(ext)s"),
             "quiet": True,
@@ -287,7 +324,6 @@ def transcribe_tiktoks(urls) -> str:
 
             files = _glob.glob(os.path.join(tmpdir, "audio.*"))
             if not files:
-                print("  No audio file produced; skipping.")
                 continue
 
             print("  Transcribing...")
@@ -295,40 +331,17 @@ def transcribe_tiktoks(urls) -> str:
             text = " ".join(seg.text.strip() for seg in segments).strip()
             if text:
                 compiled += f"\n\n[Student Video Transcript - {url}]: {text}"
-            else:
-                print("  Transcription returned no speech; skipping.")
         except Exception as e:
             print(f"  TikTok transcription failed for {url}: {e}")
             continue
 
     return compiled.strip()
 
-def scrape_pdf(url: str) -> str:
-    """Downloads a PDF and extracts real text with pdfplumber (BeautifulSoup
-    can't read PDFs — it would return raw binary stream data)."""
-    headers = {"User-Agent": "HowardGuideBot/1.0 (Educational Project context)"}
-    try:
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            return f"Placeholder content for inaccessible PDF: {url}"
-
-        pages = []
-        with pdfplumber.open(io.BytesIO(response.content)) as pdf:
-            for page in pdf.pages:
-                pages.append(page.extract_text() or "")
-
-        return re.sub(r'\s+', ' ', "\n".join(pages)).strip()
-    except Exception as e:
-        print(f"Failed parsing PDF {url}: {e}")
-        return ""
-
 # ==========================================
-# 3b. PERSISTENCE — write every ingested source into the documents/ folder
+# 3b. PERSISTENCE MODULE
 # ==========================================
 def persist_scraped_documents(loaded_documents: dict) -> None:
-    """Saves each ingested source's text to documents/<source_id>.txt so the
-    scraped corpus is captured on disk (alongside the raw Reddit JSON)."""
-    print("\n=== Persisting ingested sources to documents/ ===")
+    print("\n=== Persisting ingested base sources to documents/ ===")
     for source_id, text in loaded_documents.items():
         out_path = os.path.join(DOCUMENTS_DIR, f"{source_id}.txt")
         with open(out_path, "w", encoding="utf-8") as f:
@@ -340,15 +353,13 @@ def persist_scraped_documents(loaded_documents: dict) -> None:
 # ==========================================
 def run_full_guide_pipeline():
     loaded_documents = {}
+    extra_pdf_documents = []
 
     print("\n=== Phase 1: Ingesting Raw Source Material ===")
 
     for source_id, location in SOURCES.items():
         if source_id == "12_rate_my_professor":
-            # Direct to specialized RMP module
             rmp_text = scrape_ratemyprofessor_data(PROFESSORS_TO_SCRAPE)
-            # Option E (reproducibility): if the live API is unreachable, fall back
-            # to the committed snapshot in documents/ so the corpus stays stable.
             if not rmp_text:
                 cache_path = os.path.join(DOCUMENTS_DIR, f"{source_id}.txt")
                 if os.path.exists(cache_path):
@@ -363,10 +374,7 @@ def run_full_guide_pipeline():
             loaded_documents[source_id] = parse_local_reddit_json(reddit_path)
 
         elif source_id == "11_tiktok_advice":
-            # Real short-form media: download + transcribe the configured TikTok(s).
             transcript = transcribe_tiktoks(TIKTOK_URLS)
-            # Option E (reproducibility): if no URL is set or the live download/
-            # transcription fails, fall back to the committed snapshot.
             if not transcript:
                 cache_path = os.path.join(DOCUMENTS_DIR, f"{source_id}.txt")
                 if os.path.exists(cache_path):
@@ -375,21 +383,28 @@ def run_full_guide_pipeline():
                         transcript = f.read()
             if transcript:
                 loaded_documents[source_id] = transcript
+
         elif location.lower().endswith(".pdf"):
-            print(f"Extracting PDF source: {source_id}...")
+            print(f"Extracting direct PDF source: {source_id}...")
             text_content = scrape_pdf(location)
             if text_content:
                 loaded_documents[source_id] = text_content
 
         elif location.startswith("http"):
-            print(f"Scraping structural website: {source_id}...")
+            print(f"Scraping structural website: {source_id} ({location})...")
             text_content = scrape_and_clean_web(location)
             if text_content:
                 loaded_documents[source_id] = text_content
 
-    print(f"\nSuccessfully collected {len(loaded_documents)} structured text documents.")
+            # Check if this website contains linked documents to crawl
+            if source_id in SOURCES_TO_CRAWL_FOR_PDFS:
+                print(f"Crawling linked PDF forms on {source_id}...")
+                discovered_pdfs = crawl_linked_pdfs_from_page(source_id, location)
+                extra_pdf_documents.extend(discovered_pdfs)
 
-    # Capture the ingested corpus on disk before chunking
+    print(f"\nSuccessfully collected {len(loaded_documents)} base sources and {len(extra_pdf_documents)} linked PDF forms.")
+
+    # Save root sources to disk
     persist_scraped_documents(loaded_documents)
 
     print(f"\n=== Phase 2: Chunking (Size: {CHUNK_SIZE}, Overlap: {CHUNK_OVERLAP}) ===")
@@ -402,16 +417,41 @@ def run_full_guide_pipeline():
     )
 
     all_chunks = []
+
+    # 1. Chunk base documents
     for doc_id, text in loaded_documents.items():
-        doc_chunks = text_splitter.create_documents(texts=[text], metadatas=[{"source_origin": doc_id}])
+        doc_chunks = text_splitter.create_documents(
+            texts=[text],
+            metadatas=[{"source_origin": doc_id, "url": SOURCES.get(doc_id, "")}]
+        )
         all_chunks.extend(doc_chunks)
         print(f"-> Source '{doc_id}' split cleanly into {len(doc_chunks)} chunks.")
 
+    # 2. Chunk discovered PDF forms
+    if extra_pdf_documents:
+        pdf_chunks = text_splitter.split_documents(extra_pdf_documents)
+        all_chunks.extend(pdf_chunks)
+        print(f"-> Discovered PDF forms split cleanly into {len(pdf_chunks)} chunks.")
+
     print(f"\nPipeline processing complete. Total searchable database chunks: {len(all_chunks)}")
 
+    # ==========================================
+    # Phase 3: ChromaDB Vector Store Indexing
+    # ==========================================
+    print("\n=== Phase 3: Persisting Chunks to ChromaDB ===")
+    print("Embedding chunks using all-MiniLM-L6-v2...")
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+    vectorstore = Chroma.from_documents(
+        documents=all_chunks,
+        embedding=embeddings,
+        persist_directory=CHROMA_DIR
+    )
+    print(f"ChromaDB successfully built and stored at '{CHROMA_DIR}'.")
+
     # Sanity verification block checking the Rate My Professor chunk quality
-    print("\n=== Phase 3: Auditing Rate My Professor Chunk Integrity ===")
-    rmp_chunks = [c for c in all_chunks if c.metadata["source_origin"] == "12_rate_my_professor"]
+    print("\n=== Phase 4: Auditing Rate My Professor Chunk Integrity ===")
+    rmp_chunks = [c for c in all_chunks if c.metadata.get("source_origin") == "12_rate_my_professor"]
 
     if rmp_chunks:
         sample = rmp_chunks[0]
@@ -423,7 +463,7 @@ def run_full_guide_pipeline():
     else:
         print("No specific RMP chunks generated. Ensure the professor has active evaluations on the platform.")
 
-    return all_chunks
+    return vectorstore
 
 if __name__ == "__main__":
     run_full_guide_pipeline()
