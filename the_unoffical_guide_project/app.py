@@ -4,7 +4,7 @@ Architecture (from planning.md):
     User question
       -> retrieve() top-K chunks (vector_store.py, cosine, all-MiniLM-L6-v2)
       -> Context Assembler (numbered, source-tagged segments)
-      -> Groq llama-3.3-70b-versatile (grounded generation)
+      -> Groq openai/gpt-oss-120b (grounded generation)
       -> {answer, deduplicated sources}
 
 Grounding guarantees:
@@ -27,7 +27,7 @@ load_dotenv()
 # ==========================================
 # CONFIGURATION
 # ==========================================
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 REFUSAL = "I'm sorry, but I cannot find that information in the provided source documents."
 
 SYSTEM_PROMPT = (

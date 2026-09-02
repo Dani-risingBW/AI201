@@ -48,6 +48,7 @@ student short-form video, and Rate My Professor.
 | 10 | Registrar forms | Web page | https://howard.edu/registrar/forms |
 | 11 | Student TikTok / YouTube advice | Video transcripts (yt-dlp + Whisper) | 9 videos incl. @ssanyuspeaks; see `pipeline.py` `TIKTOK_URLS` |
 | 12 | Rate My Professor (Howard, School-421) | GraphQL API | https://www.ratemyprofessors.com |
+| 13 | Undergraduate & Graduate Student Documents and Forms in relation to financial aid support like grants, loans, billing and payment, standard documents, HEERP documents, and online programs and professional student documents | Web page | https://howard.edu/registrar/forms |
 
 ---
 
@@ -96,7 +97,7 @@ accepting slightly higher latency.
 
 ## Grounded Generation
 
-**System prompt grounding instruction:** the model (Groq `llama-3.3-70b-versatile`)
+**System prompt grounding instruction:** the model (Groq `openai/gpt-oss-120b`)
 is given only the numbered, source-tagged context segments and instructed:
 
 1. Answer **only** using the provided context segments; no outside or prior knowledge.
