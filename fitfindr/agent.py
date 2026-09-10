@@ -90,7 +90,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         )
         
         response = client.chat.completions.create(
-            model="gpt-oss-120b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}

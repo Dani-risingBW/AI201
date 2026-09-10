@@ -226,7 +226,7 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
     # 4. Call the LLM and return its response as a string
     try:
         response = client.chat.completions.create(
-            model="gpt-oss-120b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -308,7 +308,7 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     try:
         client = _get_groq_client()
         response = client.chat.completions.create(
-            model="gpt-oss-120b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
