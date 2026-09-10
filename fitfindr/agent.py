@@ -1,8 +1,11 @@
 """
 agent.py
 
-The FitFindr planning loop. Orchestrates the three tools in response to a
-natural language user query, passing state between them via a session dict.
+The FitFindr planning loop. Orchestrates core and stretch tools in response to
+a natural language user query, passing state between them via a session dict.
+
+Core tools: search_listings, suggest_outfit, create_fit_card, evaluate_price_fairness
+Stretch tools: price_comparison_analyzer, style_profile_manager, trend_radar
 """
 
 import os
@@ -10,7 +13,15 @@ import json
 from dotenv import load_dotenv
 from groq import Groq
 
-from tools import search_listings, suggest_outfit, create_fit_card, evaluate_price_fairness
+from tools import (
+    search_listings,
+    suggest_outfit,
+    create_fit_card,
+    evaluate_price_fairness,
+    price_comparison_analyzer,
+    style_profile_manager,
+    trend_radar,
+)
 from utils.data_loader import load_listings
 
 load_dotenv()
@@ -25,21 +36,32 @@ def _get_agent_groq_client():
 
 # ── session state ─────────────────────────────────────────────────────────────
 
-def _new_session(query: str, wardrobe: dict) -> dict:
+def _new_session(query: str, wardrobe: dict, user_id: str | None = None) -> dict:
     """
     Initialize and return a fresh session dict for one user interaction.
     """
     return {
-        "query": query,               # original user query
-        "parsed": {},                # extracted description / size / max_price
-        "search_results": [],        # list of matching listing dicts
-        "selected_item": None,       # top result, passed into suggest_outfit
-        "wardrobe": wardrobe,        # user's wardrobe dict
-        "price_context": None,       # dict returned by evaluate_price_fairness
-        "outfit_suggestion": None,   # string returned by suggest_outfit
-        "fit_card": None,            # string returned by create_fit_card
-        "error": None,               # set if the interaction ended early
-        "retry_notes": None,         # keeps track of relaxed criteria changes
+        # Core session
+        "query": query,                    # original user query
+        "user_id": user_id,                # for stretch feature: profile tracking
+        "parsed": {},                      # extracted description / size / max_price
+        "search_results": [],              # list of matching listing dicts
+        "selected_item": None,             # top result, passed into suggest_outfit
+        "wardrobe": wardrobe,              # user's wardrobe dict
+
+        # Core outputs
+        "price_context": None,             # dict returned by evaluate_price_fairness
+        "outfit_suggestion": None,         # string returned by suggest_outfit
+        "fit_card": None,                  # string returned by create_fit_card
+
+        # Stretch feature outputs
+        "price_comparison": None,          # price_comparison_analyzer output
+        "user_profile": None,              # style_profile_manager output
+        "trending_context": None,          # trend_radar output
+
+        # Error handling
+        "error": None,                     # set if the interaction ended early
+        "retry_notes": None,               # keeps track of relaxed criteria changes
     }
 
 
@@ -68,7 +90,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         )
         
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}
@@ -157,7 +179,62 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     card_text = create_fit_card(outfit=session["outfit_suggestion"], new_item=session["selected_item"])
     session["fit_card"] = card_text
 
-    # Step 9: Return the session dict
+    # ── STRETCH FEATURES (Non-blocking enhancements) ─────────────────────────
+
+    # Step 9: Call price_comparison_analyzer() for deeper market analysis
+    try:
+        full_dataset = load_listings()
+        comparison_result = price_comparison_analyzer(
+            target_item=session["selected_item"],
+            mock_dataset=full_dataset,
+            time_window="30_days",
+            platform_filter=None
+        )
+        if comparison_result.get("status") != "error":
+            session["price_comparison"] = comparison_result
+    except Exception:
+        pass  # Non-blocking: fails silently
+
+    # Step 10: Call style_profile_manager() to track user preferences
+    if session.get("user_id"):
+        try:
+            # Log this search to the user's profile
+            style_profile_manager(
+                user_id=session["user_id"],
+                action="log_search",
+                profile_data={"query": session["query"]}
+            )
+            # Fetch the user's full profile
+            profile_result = style_profile_manager(
+                user_id=session["user_id"],
+                action="fetch_profile"
+            )
+            if profile_result.get("status") == "success":
+                session["user_profile"] = profile_result.get("profile")
+        except Exception:
+            pass  # Non-blocking: fails silently
+
+    # Step 11: Call trend_radar() to surface trending items and hashtags
+    try:
+        # Extract dominant style tag from selected item
+        style_tags = session["selected_item"].get("style_tags", [])
+        trending_category = style_tags[0] if style_tags else "vintage"
+
+        # Extract price ceiling from selected item for context
+        item_price = session["selected_item"].get("price", 50.0)
+        price_ceiling = item_price * 1.5  # Allow 50% higher for trending context
+
+        trend_result = trend_radar(
+            style_category=trending_category,
+            size_range=size,
+            price_ceiling=price_ceiling,
+            time_window="this_week"
+        )
+        session["trending_context"] = trend_result
+    except Exception:
+        pass  # Non-blocking: fails silently
+
+    # Step 12: Return the complete session dict (with or without stretch enhancements)
     return session
 
 

@@ -79,10 +79,6 @@ The agent shouldn't crash the whole session at the very last step. If the LLM fa
 Fallback: `"Just picked up this [Item Title] for $[Price] to wear with my [Outfit Items]!"*
 ---
 
-### Additional Tools (if any)
-
-<!-- Copy the block above for any tools beyond the required three -->
-
 ### Tool 4: evaluate_price_fairness
 
 **What it does:**
@@ -102,6 +98,100 @@ A dictionary containing the structured deal classification, calculated marketpla
 <!-- What should the agent do if the outfit data is incomplete? -->
 If no comparable items are found like no matching categories or tags exist in the dataset, the tool defaults the market_average to the item’s own price and sets the rating to "Fair Market Value". The agent informs the user that it’s a unique/rare piece with no local competitors, and seamlessly passes the item to the styling step.
 If an item in the dataset is missing a price field or is corrupted, causing a calculation crash, the tool returns a status dictionary indicating an error: {"status": "error", "message": "..."}. The agent catches this, tells the user, "My price analyzer is having trouble with the marketplace data right now, so let's skip the math and look at how to style it!" and immediately advances the planning loop to suggest_outfit so the session never breaks.
+
+---
+
+## Stretch Features
+
+These features extend ThreadScout AI beyond the core MVP. They enhance the user experience with memory, real-time market trends, and advanced price analysis.
+
+---
+
+### Tool 5: price_comparison_analyzer (STRETCH)
+
+**What it does:**
+Provides a deeper market analysis by comparing the item's price not just to category averages, but also to similar items sold in the past 30 days, regional pricing variations, and platform-specific benchmarks. Surfaces alerts if the price is trending up or down.
+
+**Input parameters:**
+- `target_item` (dict): The specific item dictionary selected from the search listings.
+- `mock_dataset` (list): The full listing database to extract comparable items.
+- `time_window` (str, optional): "7_days", "30_days", "all_time" (default: "30_days").
+- `platform_filter` (str, optional): Filter to specific platforms (e.g., "Depop", "Grailed") or compare across all.
+
+**What it returns:**
+A dictionary containing:
+- `baseline_price` (float): Item's current price
+- `market_average` (float): Average of comparable items
+- `price_trend` (str): "↑ Rising" / "→ Stable" / "↓ Falling"
+- `percentile_rank` (int): 0–100 where 100 is most expensive
+- `platform_comparison` (dict): {platform_name: avg_price}
+- `recommendations` (str): Natural language advice ("Buy now, prices rising" or "Wait, historically undervalued")
+
+**What happens if it fails or returns nothing:**
+If time_window is invalid or no comparable items exist in the requested time frame, the tool falls back to `all_time` comparison. If platform_filter returns no results, it expands to all platforms and notes the change to the user: "No recent sales of this item on Depop—comparing against all platforms."
+
+---
+
+### Tool 6: style_profile_manager (STRETCH)
+
+**What it does:**
+Builds and maintains a persistent user style profile across multiple sessions. Tracks the user's clothing preferences, body type, budget range, favorite platforms, and past searches. Uses this history to personalize search constraints and outfit suggestions without asking the user to repeat themselves.
+
+**Input parameters:**
+- `user_id` (str): Unique identifier for the user (email, UUID, or username).
+- `action` (str): "create_profile", "update_profile", "fetch_profile", "log_search", "get_style_summary".
+- `profile_data` (dict, optional): For create/update actions, contains fields like:
+  - `preferred_styles` (list): ["vintage", "minimalist", "grunge"]
+  - `size_range` (dict): {"top": "M", "bottom": "32W", "shoes": "8"}
+  - `budget_range` (dict): {"min": 10, "max": 80}
+  - `favorite_platforms` (list): ["Depop", "Grailed"]
+  - `past_searches` (list): History of previous queries
+
+**What it returns:**
+- On "create_profile" / "update_profile": `{"status": "success", "profile_id": "..."}`
+- On "fetch_profile": The complete profile dictionary
+- On "log_search": `{"status": "logged", "search_count": N}`
+- On "get_style_summary": A natural language summary of the user's style (e.g., "You tend to search for vintage and grunge pieces in size M, with a $50 budget. Popular on Depop.")
+
+**What happens if it fails or returns nothing:**
+If the user_id doesn't exist, the tool automatically creates a blank profile and returns `{"status": "new_profile", "profile_id": "..."}`. If the backend storage is unavailable, the agent gracefully degradates to a session-only memory (data lost when session ends) and informs the user: "I can't save your style preferences right now, but I'll remember them for this session."
+
+---
+
+### Tool 7: trend_radar (STRETCH)
+
+**What it does:**
+Scans trending hashtags and popular posts from fashion platforms (Instagram, TikTok, Depop, Pinterest) to identify what styles, colors, and items are currently hot in the user's size range and price bracket. Alerts users to trending items they might love and raises visibility of underrated trending pieces in the dataset.
+
+**Input parameters:**
+- `style_category` (str): "vintage", "minimalist", "grunge", "cottagecore", "y2k", etc.
+- `size_range` (str, optional): "XS", "S", "M", "L", "XL", "One Size" (filters results to user's size).
+- `price_ceiling` (float, optional): Upper budget limit for trending items.
+- `time_window` (str): "today", "this_week", "this_month" (default: "this_week").
+
+**What it returns:**
+A dictionary containing:
+- `trending_items` (list): List of items from the dataset that match the trending aesthetic.
+- `trending_hashtags` (list): Top 10 hashtags for this style (e.g., "#VintageY2K", "#GrungeEra").
+- `search_spike` (dict): Keywords spiking in popularity (e.g., {"90s": +45%, "cargo": +32%}).
+- `trending_alert` (str): Natural language summary (e.g., "Y2K is exploding right now! 📈 Cargo pants and mini bags are spiking. I found 3 trending pieces in your size under $50.")
+
+**What happens if it fails or returns nothing:**
+If the external trend API is down or rate-limited, the tool falls back to analyzing the mock dataset for the most recently added items in matching categories, then informs the user: "I can't check live trends right now, but here are the newest vintage finds in our database." If no items match the style/size/price combo, it returns `{"trending_items": [], "note": "No trending items match your criteria, but your style is timeless!"}`.
+
+---
+
+## Retry Logic with Fallback (CORE FEATURE - DOCUMENTED)
+
+✅ **Already Implemented in Planning Loop Step 1**
+
+The agent automatically retries with loosened constraints when `search_listings()` returns no results:
+- **Retry 1:** Remove size filter, keep description + max_price
+- **Retry 2:** Remove max_price filter, keep description + size
+- **Inform User:** Each retry shows what filters were adjusted (e.g., "No matches under $30, but I found these options if you're willing to flex your budget...")
+- **Max Retries:** 2 attempts; if still empty, stop and suggest better search keywords
+
+This prevents "no results" from being a dead end and gives users intelligent fallback suggestions.
 
 ---
 
@@ -193,7 +283,31 @@ The agent bundles all successfully gathered data together and prints a clean, na
 ## State Management
 
 **How does information from one tool get passed to the next?**
-<!-- Describe how your agent stores and accesses state within a session. What data is tracked? How is it passed between tool calls? -->
+
+The planning loop maintains a single `session` dictionary that persists throughout a user's interaction:
+
+```python
+session = {
+    "query": str,                          # Original user query
+    "parsed": dict,                        # Extracted description, size, max_price
+    "search_results": list,                # Matching listings
+    "selected_item": dict,                 # Top result from search
+    "wardrobe": dict,                      # User's clothing collection
+    "price_context": dict,                 # evaluate_price_fairness output
+    "outfit_suggestion": str,              # suggest_outfit output
+    "fit_card": str,                       # create_fit_card output
+    "error": str | None,                   # Terminal error message if any
+    "retry_notes": str | None,             # Notes about loosened search constraints
+}
+```
+
+**STRETCH FEATURES - Extended State:**
+- `user_profile`: dict (from style_profile_manager) – persists across sessions
+- `trending_context`: dict (from trend_radar) – current trends matching user's profile
+- `price_comparison`: dict (from price_comparison_analyzer) – enriched price analysis
+- `trend_alerts`: list – user notifications about trending items
+
+Each tool reads from session and writes its output back. The planning loop orchestrates the flow and handles conditional branches based on success/failure states.
 
 ---
 
@@ -203,9 +317,17 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| search_listings | No results match the query | |
-| suggest_outfit | Wardrobe is empty | |
-| create_fit_card | Outfit input is missing or incomplete | |
+| search_listings | No results match the query | Retry with loosened constraints (remove size, then remove price) up to 2 times; if still empty, stop and suggest better keywords |
+| suggest_outfit | Wardrobe is empty | Call LLM with generic styling prompts; always return useful output even without logged wardrobe |
+| create_fit_card | Outfit input is missing or incomplete | Use Python string interpolation fallback: "Just picked up this [Item] for $[Price] to wear with my [Outfit Items]!" |
+| evaluate_price_fairness | No comparable items in dataset | Set market_average to item's own price; rating to "Fair Market Value"; inform user it's a rare/unique piece |
+| evaluate_price_fairness | Missing/corrupted price field | Catch exception, return {"status": "error"}; agent skips price check and advances to suggest_outfit |
+| **price_comparison_analyzer** (STRETCH) | Time window has no comparable sales | Fall back to all_time comparison; note the change to user |
+| **price_comparison_analyzer** (STRETCH) | Platform filter returns no results | Expand to all platforms and inform user: "No recent sales on [Platform]—comparing against all platforms" |
+| **style_profile_manager** (STRETCH) | Backend storage unavailable | Gracefully degrade to session-only memory; inform user preferences won't persist |
+| **style_profile_manager** (STRETCH) | User_id doesn't exist | Automatically create blank profile; return {"status": "new_profile"} |
+| **trend_radar** (STRETCH) | External trend API is down/rate-limited | Fall back to analyzing mock dataset for most recently added items; inform user of fallback |
+| **trend_radar** (STRETCH) | No trending items match criteria | Return empty list with note: "No trending items match your criteria, but your style is timeless!" |
 
 ---
 
@@ -347,6 +469,44 @@ The Search Failure Path: Input a completely unsearchable request. Verify that th
 The Empty Wardrobe Path: Input a valid item request but pass an empty wardrobe dictionary. Verify that the planning loop catches the empty condition at Step 3 and safely exits with the exact message instructing the user to add clothes.
 
 The Complete API Timeout Path: I will temporarily disconnect my Wi-Fi/simulate a broken Groq API key and run a query. I will verify that the agent gracefully catches the crash and prints a human-like system error apology instead of dumping an unhandled stack trace to the user console.
+
+---
+
+**Milestone 5 — Stretch Feature Implementations (Optional):**
+
+**5a. price_comparison_analyzer**
+AI Tool: Claude
+
+Input to AI: Tool 5 specification, sample item with price history, mock dataset with timestamps. Request: "Build a deterministic function that calculates price trends, percentile rankings, and platform comparisons without external APIs."
+
+Expected Output: Python function returning trend analysis, price recommendations, and platform benchmarking.
+
+Verification Strategy: Test with 3 items (recently listed, stable price, declining value) and verify trend detection accuracy.
+
+---
+
+**5b. style_profile_manager**
+
+AI Tool: Claude
+
+Input to AI: Tool 6 specification, schema for user_profile storage (file-based or simple JSON). Request: "Write a persistent profile system that gracefully handles missing users and storage unavailability."
+
+Expected Output: Python class with create/update/fetch/log methods and session-only fallback.
+
+Verification Strategy: Create a user, log searches, fetch profile. Simulate storage failure and verify graceful degradation message.
+
+---
+
+**5c. trend_radar**
+
+AI Tool: Claude
+
+Input to AI: Tool 7 specification, mock dataset with style tags and recency. Request: "Build a trend analyzer that identifies popular items/hashtags in the dataset and handles API failures gracefully."
+
+Expected Output: Python function analyzing dataset trends, with fallback to static analysis if external APIs unavailable.
+
+Verification Strategy: Test with trending styles (e.g., "y2k", "grunge"), verify hashtag generation, confirm fallback activates when API is unavailable.
+
 ---
 
 ## A Complete Interaction (Step by Step)
@@ -378,3 +538,29 @@ The Search Failure Exit: If nothing is found after 2 retries, the flow stops ear
 The Empty Wardrobe Exit: If an item is found but the user's wardrobe is completely empty, the agent stops after the price check. The user sees the found item details but receives a polite alert explaining that an outfit cannot be built until they add some clothes to their profile.
 
 The System Recovery Path: If a background API error or data glitch occurs during the final social caption step, the user is never shown a crash screen. Instead, they see a smooth fallback message providing a clean, auto-generated text template using standard string blending.
+
+---
+
+## Implementation Roadmap
+
+### Core Features (MVP - Required)
+1. ✅ search_listings (with 2x retry fallback)
+2. ✅ evaluate_price_fairness
+3. ✅ suggest_outfit (with empty wardrobe handling)
+4. ✅ create_fit_card (with fallback string template)
+5. ✅ Planning loop orchestration
+6. ✅ Retry logic with loosened constraints
+7. ✅ ThreadScout AI editorial frontend (Gradio)
+
+### Stretch Features (Optional - Enhanced UX)
+1. 🎯 **Tool 5: price_comparison_analyzer** – Deep market analysis with trends and platform benchmarking
+2. 🎯 **Tool 6: style_profile_manager** – Persistent user preferences across sessions
+3. 🎯 **Tool 7: trend_radar** – Real-time trend detection and recommendations
+4. 🎯 **Extended State Management** – Support for profile, trends, and enriched price data
+5. 🎯 **UI Integration** – Display trending alerts, price trends, and personalized recommendations in Gradio frontend
+
+### Integration Points
+- **style_profile_manager** integrates with the Gradio login/onboarding flow to load user preferences on each session
+- **trend_radar** auto-runs at session start to populate trending alerts and suggestions
+- **price_comparison_analyzer** runs in parallel with evaluate_price_fairness to enrich price data
+- All stretch features degrade gracefully; MVP features never break due to stretch feature failures
