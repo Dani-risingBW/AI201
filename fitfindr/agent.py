@@ -67,13 +67,18 @@ def _new_session(query: str, wardrobe: dict, user_id: str | None = None) -> dict
 
 # ── planning loop ─────────────────────────────────────────────────────────────
 
-def run_agent(query: str, wardrobe: dict) -> dict:
+def run_agent(query: str, wardrobe: dict, user_id: str | None = None) -> dict:
     """
     Main agent entry point. Runs the FitFindr planning loop for a single
     user interaction and returns the completed session dict.
+
+    Args:
+        query: Natural language search query from the user
+        wardrobe: User's wardrobe dict with items
+        user_id: Optional user ID to enable style_profile_manager tracking
     """
     # Step 1: Initialize the session
-    session = _new_session(query, wardrobe)
+    session = _new_session(query, wardrobe, user_id=user_id)
 
     # Step 2: Parse the user's query using structured LLM entity extraction
     try:

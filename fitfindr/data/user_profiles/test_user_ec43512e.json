@@ -1,0 +1,29 @@
+{
+  "user_id": "test_user_ec43512e",
+  "created_at": "2026-09-11T09:44:11.851411",
+  "preferred_styles": [
+    "vintage",
+    "grunge",
+    "minimalist"
+  ],
+  "size_range": {
+    "top": "S/M",
+    "bottom": "26W",
+    "shoes": "7"
+  },
+  "budget_range": {
+    "min": 15,
+    "max": 75
+  },
+  "favorite_platforms": [
+    "Depop",
+    "Grailed"
+  ],
+  "past_searches": [
+    {
+      "query": "vintage band tee under $30",
+      "timestamp": "2026-09-11T09:44:11.878555"
+    }
+  ],
+  "search_count": 1
+}
