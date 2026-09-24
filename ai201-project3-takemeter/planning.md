@@ -156,9 +156,9 @@ The "Pure Source" Exception: If the post simply links to a news source or copies
 
 ### B. Annotation Assistance
 * **Pre-Labeling Framework:**
-  * *I will use a programmatic zero-shot LLM framework to automate the baseline labeling pass across the dataset. The specific foundation architecture used is Llama 3.3 70B accessed via the Groq API (llama-3.3-70b-versatile). This model was selected due to its highly optimized inference speeds, massive context parsing window, and native JSON mode configuration, which allows for clean bulk dataset handling at zero cost under the platform's free tier.*
+  * *I will use a programmatic zero-shot LLM framework to automate the baseline labeling pass across the dataset. The specific foundation architecture used is OpenAI GPT-OSS 120B accessed via the OpenAI API (openai/gpt-oss-120b). This model was selected due to its strong instruction-following capabilities, massive context parsing window, and native JSON mode configuration, which allows for clean bulk dataset handling with reliable structured outputs.*
 * **Traceability & Disclosure:**
-  * *To maintain strict transparency, accountability, and traceability throughout the engineering pipeline, the dataset's structural schema handles tracking dynamically. The document contains an explicit, dedicated notes column mapped directly alongside the label targets. Whenever an entry is evaluated by the Groq API, the script forces the LLM to record a structural string log detailing the exact decision heuristic or rule exception applied (e.g., "Call-to-Action Rule applied"). Any manual overrides, hard-coded adjustments, or human verifications will have their notes cell explicitly modified to read "Human Verified," ensuring an auditor can seamlessly separate human ground-truth labels from synthetic classifications in the final AI usage appendix.*
+  * *To maintain strict transparency, accountability, and traceability throughout the engineering pipeline, the dataset's structural schema handles tracking dynamically. The document contains an explicit, dedicated notes column mapped directly alongside the label targets. Whenever an entry is evaluated by the OpenAI API, the script forces the LLM to record a structural string log detailing the exact decision heuristic or rule exception applied (e.g., "Call-to-Action Rule applied"). Any manual overrides, hard-coded adjustments, or human verifications will have their notes cell explicitly modified to read "Human Verified," ensuring an auditor can seamlessly separate human ground-truth labels from synthetic classifications in the final AI usage appendix.*
 
 ### C. Failure Analysis
 * **Error Pattern Extraction:**
@@ -172,5 +172,38 @@ The "Pure Source" Exception: If the post simply links to a news source or copies
 
   Rule Set Stress Test: I will take the top two most prevalent failure modes identified by the AI and cross-reference them directly against my Part 3 Boundary Disambiguation rules. This check will determine if the failure happened because the DistilBERT model lacked capacity, or if my original instructions in the annotation guide were too weak or mathematically contradictory, allowing me to definitively assign the root cause of the error.*
 
+---
+
+## 8. Stretch Features Status
+
+### Completed Features
+
+**Error Pattern Analysis** ✓
+- Identified systematic pattern: pronoun-dominance overfitting
+- Three detailed case studies with root cause analysis
+- Human verification of AI-generated hypotheses performed
+- Confusion matrix mapping conducted to validate findings
+- Proposed mitigations for each failure mode documented
+
+**Deployed Interface** ✓
+- Gradio-based web UI implemented (open_classifier_ui.py)
+- Sample posts tab with 6 realistic examples
+- Single post classification with title/body parsing
+- Multiple posts batch processing with flexible separators
+- CSV/Excel file upload with auto-detection of title/body columns
+- Confidence scores and threshold-aware predictions implemented
+
+### Not Implemented
+
+**Inter-annotator Reliability**
+- Would require recruiting additional annotator for 30+ examples
+- Cohen's kappa calculation framework prepared but not executed
+- Disagreement analysis procedure documented
+
+**Confidence Calibration**
+- Model produces confidence scores but calibration analysis not performed
+- Confidence correlation with accuracy not measured
+- Temperature scaling or Platt scaling not applied
+- Reliability diagram generation not conducted
 
   

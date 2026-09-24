@@ -67,8 +67,8 @@ To ensure sufficient representation of the rarer news class, a multi-tiered coll
 3.  **Sorting Parameter Pivots:** Shifting scraping targets from the chronological `New` feed to `Top (Past Month)` where high-signal news naturally clusters due to upvote metrics.
 
 ### AI Pre-Labeling & Traceability Disclosure
-Initial baseline passes were accelerated using a programmatic zero-shot LLM framework running **Llama 3.3 70B** via the **Groq API** (`llama-3.3-70b-versatile`) with `temperature=0.0`. 
-To ensure strict transparency, the data schema utilizes a dedicated `notes` column. The API automatically logs the exact rule applied during inference (e.g., *“Call-to-Action Rule applied”*). Any subsequent manual overrides or human validation checks rewrite this block to read *“Human Verified”*, providing clean data lineage for auditing.
+Initial baseline passes were accelerated using a programmatic zero-shot LLM framework running **OpenAI GPT-OSS 120B** via the **OpenAI API** (`openai/gpt-oss-120b`) with `temperature=0.0`. 
+To ensure strict transparency, the data schema utilizes a dedicated `notes` column. The API automatically logs the exact rule applied during inference (e.g., *”Call-to-Action Rule applied”*). Any subsequent manual overrides or human validation checks rewrite this block to read *”Human Verified”*, providing clean data lineage for auditing.
 
 ---
 
@@ -198,7 +198,35 @@ Body: " + body`). Standard approaches often drop the body text column entirely t
 
 ## 11. AI Usage Appendix
 
-* **Instance 1 (Data Synthesis Phase):** Directed Llama 3.3 via the Groq API to ingest 251 raw scraped rows and apply programmatic label assignment alongside structural explanation fields. *Override Action:* Overrode and discarded approximately 12 entries manually where the LLM skipped code formatting markers or misread technical tool distributions as casual forum banter.
+* **Instance 1 (Data Synthesis Phase):** Directed OpenAI GPT-OSS 120B via the OpenAI API to ingest 251 raw scraped rows and apply programmatic label assignment alongside structural explanation fields. *Override Action:* Overrode and discarded approximately 12 entries manually where the LLM skipped code formatting markers or misread technical tool distributions as casual forum banter.
 * **Instance 2 (Pattern Surface Phase):** Injected evaluation error structures into an LLM interface to parse textual overlaps. *Override Action:* Discarded the AI's generated output regarding text length and sarcasm metrics after manually re-reading the records, overriding the model's conclusions with a localized pronoun-overfitting mitigation strategy.
+
+---
+
+## 12. Stretch Features Implementation
+
+### 12.1 Error Pattern Analysis ✓ (Completed)
+A comprehensive error pattern analysis was conducted as documented in Section 7. The analysis identified a key systematic pattern: **pronoun-dominance overfitting**. Rather than just listing individual misclassifications, we identified that the model consistently over-indexed on first-person pronouns (`I`, `We`, `My`) as indicators of subjective content, even when those pronouns were used in authoritative research disclosures or technical documentation. Three detailed case studies with root cause analysis are provided, supporting our findings with concrete examples and proposed mitigations.
+
+### 12.2 Deployed Interface ✓ (Completed)
+A fully functional Gradio-based web interface has been implemented and deployed as `open_classifier_ui.py`. The interface provides:
+- **Sample Posts Tab:** Pre-loaded 6 example posts demonstrating the classifier on realistic Reddit content
+- **Single Post Tab:** Manual classification of individual posts in Title + Body format
+- **Multiple Posts Tab:** Batch classification of multiple posts separated by blank lines or `---`
+- **Batch Upload Tab:** CSV/Excel file processing with automatic title/body column detection
+- All predictions include confidence scores and support the model's classification thresholds (0.70 threshold for high-confidence news classification)
+
+### 12.3 Inter-annotator Reliability
+This stretch feature was not implemented in the current version. To implement:
+- Recruit at least one additional annotator to label 30+ examples independently
+- Calculate Cohen's kappa coefficient or simple percentage agreement
+- Analyze disagreement patterns to identify ambiguous edge cases and refine labeling guidelines
+
+### 12.4 Confidence Calibration
+This stretch feature was not implemented in the current version. To implement:
+- Analyze prediction confidence distribution across correct vs. incorrect predictions
+- Compare 90% confidence predictions vs. 60% confidence predictions to measure calibration
+- Generate reliability diagrams showing expected accuracy at each confidence level
+- Consider temperature scaling or Platt scaling to improve calibration if needed
 
 ---
