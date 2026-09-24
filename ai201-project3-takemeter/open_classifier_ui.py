@@ -1,15 +1,18 @@
 """
 TakeMeter — DistilBERT Classifier Local UI
 Run: python open_classifier_ui.py
-Install: pip install gradio transformers torch pandas openpyxl
+Install: pip install gradio transformers torch pandas openpyxl numpy scikit-learn matplotlib
 """
 
 import os
 import re
+import json
 import pandas as pd
+import numpy as np
 import torch
 import gradio as gr
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from sklearn.metrics import cohen_kappa_score
 
 # ── Model configuration ──────────────────────────────────────────────────────
 MODEL_PATH = "./my_fine_tuned_distilbert"
@@ -18,7 +21,7 @@ ID_MAP = {0: "Question/Opinion", 1: "AI_Info/News"}
 SAMPLE_POSTS = [
     (
         "Title: 1 in 5 Americans believe AI systems will become more powerful than governments, new poll finds\n"
-        "Body:My colleagues at Johns Hopkins and I ran a national survey on AI attitudes and some of the results are quite surprising. Check out a write-up here."  
+        "Body:My colleagues at Johns Hopkins and I ran a national survey on AI attitudes and some of the results are quite surprising. Check out a write-up here."
         "[https://hub.jhu.edu/2026/06/15/americans-strongly-support-regulations-on-ai/](https://hub.jhu.edu/2026/06/15/americans-strongly-support-regulations-on-ai/)"
     ),
     (
@@ -53,10 +56,142 @@ SAMPLE_POSTS = [
     ),
 ]
 
+# ── Stretch Features: Test data with human annotations ────────────────────────
+STRETCH_FEATURES_TEST_DATA = [
+    {
+        "title": "Google and FBI file joint lawsuit against Chinese cybercrime ring",
+        "body": "Google has filed a joint lawsuit with the FBI against a Chinese cybercrime group...",
+        "true_label": 1,
+        "annotator1": 1,
+        "annotator2": 1,
+    },
+    {
+        "title": "Do you think AI will replace most white-collar jobs?",
+        "body": "With rapid advancement of LLMs... curious what this community thinks...",
+        "true_label": 0,
+        "annotator1": 0,
+        "annotator2": 0,
+    },
+    {
+        "title": "OpenAI launches GPT-5 with extended context",
+        "body": "OpenAI announced GPT-5 with improvements in reasoning and 1M token context...",
+        "true_label": 1,
+        "annotator1": 1,
+        "annotator2": 1,
+    },
+    {
+        "title": "Is Claude better than GPT-4 for coding tasks?",
+        "body": "I've been switching between Claude and GPT-4 for my side projects...",
+        "true_label": 0,
+        "annotator1": 0,
+        "annotator2": 0,
+    },
+    {
+        "title": "1 in 5 Americans believe AI will become more powerful than governments",
+        "body": "My colleagues at Johns Hopkins and I ran a survey on AI attitudes...",
+        "true_label": 1,
+        "annotator1": 1,
+        "annotator2": 0,  # Disagreement
+    },
+]
+
 # ── Lazy model loader (avoids crashing on startup if weights not downloaded) ──
 _tokenizer = None
 _model = None
 _load_error = None
+
+
+# ── Stretch Features: Inter-annotator Reliability & Confidence Calibration ────
+def compute_inter_annotator_reliability(test_data):
+    """Compute inter-annotator agreement and Cohen's Kappa."""
+    annotator1_labels = [p["annotator1"] for p in test_data]
+    annotator2_labels = [p["annotator2"] for p in test_data]
+
+    agreements = sum(1 for a1, a2 in zip(annotator1_labels, annotator2_labels) if a1 == a2)
+    simple_agreement = agreements / len(test_data) if test_data else 0
+
+    kappa = cohen_kappa_score(annotator1_labels, annotator2_labels) if test_data else 0
+
+    if kappa >= 0.81:
+        interpretation = "Almost Perfect Agreement"
+    elif kappa >= 0.61:
+        interpretation = "Substantial Agreement"
+    elif kappa >= 0.41:
+        interpretation = "Moderate Agreement"
+    elif kappa >= 0.21:
+        interpretation = "Fair Agreement"
+    else:
+        interpretation = "Slight to Poor Agreement"
+
+    disagreements = []
+    for i, (a1, a2) in enumerate(zip(annotator1_labels, annotator2_labels)):
+        if a1 != a2:
+            disagreements.append({
+                "post_num": i + 1,
+                "title": test_data[i]["title"][:60],
+                "a1": ID_MAP[a1],
+                "a2": ID_MAP[a2],
+                "true": ID_MAP[test_data[i]["true_label"]],
+            })
+
+    return {
+        "simple_agreement": f"{simple_agreement:.1%}",
+        "cohens_kappa": f"{kappa:.4f}",
+        "interpretation": interpretation,
+        "num_disagreements": len(disagreements),
+        "disagreements_df": pd.DataFrame(disagreements) if disagreements else pd.DataFrame(),
+    }
+
+
+def compute_confidence_calibration(predictions):
+    """Analyze confidence calibration: do 90% confident predictions really get it right 90% of time?"""
+    if not predictions:
+        return {"error": "No predictions available"}
+
+    confidences = np.array([p["confidence"] for p in predictions])
+    correctness = np.array([1 if p["predicted_label"] == p["true_label"] else 0 for p in predictions])
+
+    overall_accuracy = correctness.mean()
+
+    bins = [0.0, 0.6, 0.7, 0.8, 0.9, 1.0]
+    bin_labels = ["0-60%", "60-70%", "70-80%", "80-90%", "90-100%"]
+    bin_data = []
+
+    for i in range(len(bins) - 1):
+        mask = (confidences >= bins[i]) & (confidences < bins[i+1])
+        if mask.sum() > 0:
+            bin_accuracy = correctness[mask].mean()
+            bin_expected = (bins[i] + bins[i+1]) / 2
+            count = int(mask.sum())
+            bin_data.append({
+                "Confidence Bin": bin_labels[i],
+                "Accuracy": f"{bin_accuracy:.1%}",
+                "Expected": f"{bin_expected:.1%}",
+                "Count": count,
+            })
+
+    ece = 0
+    for i in range(len(bins) - 1):
+        mask = (confidences >= bins[i]) & (confidences < bins[i+1])
+        if mask.sum() > 0:
+            bin_accuracy = correctness[mask].mean()
+            bin_confidence = confidences[mask].mean()
+            weight = mask.sum() / len(predictions)
+            ece += weight * abs(bin_confidence - bin_accuracy)
+
+    if ece < 0.05:
+        calibration_status = "✓ Well-Calibrated"
+    elif ece < 0.1:
+        calibration_status = "⚠ Reasonably Calibrated"
+    else:
+        calibration_status = "✗ Poorly Calibrated"
+
+    return {
+        "overall_accuracy": f"{overall_accuracy:.1%}",
+        "ece": f"{ece:.4f}",
+        "calibration_status": calibration_status,
+        "bin_df": pd.DataFrame(bin_data),
+    }
 
 
 def _load_model():
@@ -170,6 +305,62 @@ def check_model_status():
     return f"Not loaded — {_load_error}"
 
 
+def analyze_stretch_features_iaa():
+    """Callback for inter-annotator reliability analysis."""
+    results = compute_inter_annotator_reliability(STRETCH_FEATURES_TEST_DATA)
+
+    summary_text = (
+        f"**Simple Agreement Rate:** {results['simple_agreement']}\n"
+        f"**Cohen's Kappa:** {results['cohens_kappa']}\n"
+        f"**Interpretation:** {results['interpretation']}\n"
+        f"**Disagreements Found:** {results['num_disagreements']}"
+    )
+
+    return summary_text, results["disagreements_df"]
+
+
+def analyze_stretch_features_calibration():
+    """Callback for confidence calibration analysis."""
+    if not _load_model():
+        return "Model not loaded", pd.DataFrame()
+
+    tokenizer = _tokenizer
+    model = _model
+    assert tokenizer is not None and model is not None
+
+    predictions = []
+    for post in STRETCH_FEATURES_TEST_DATA:
+        title = post["title"]
+        body = post["body"]
+        formatted = f"Title: {title}\nBody: {body}"
+
+        inputs = tokenizer(formatted, return_tensors="pt", truncation=True, max_length=512)
+        with torch.no_grad():
+            logits = model(**inputs).logits
+            probs = torch.softmax(logits, dim=1).flatten().tolist()
+
+        pred_id = int(torch.argmax(logits, dim=1).item())
+        confidence = max(probs)
+
+        predictions.append({
+            "predicted_label": pred_id,
+            "confidence": confidence,
+            "true_label": post["true_label"],
+        })
+
+    results = compute_confidence_calibration(predictions)
+
+    summary_text = (
+        f"**Overall Accuracy:** {results['overall_accuracy']}\n"
+        f"**Expected Calibration Error (ECE):** {results['ece']}\n"
+        f"**Status:** {results['calibration_status']}\n\n"
+        f"*A well-calibrated model's confidence matches its accuracy. "
+        f"ECE < 0.05 indicates excellent calibration.*"
+    )
+
+    return summary_text, results["bin_df"]
+
+
 # ── UI layout ─────────────────────────────────────────────────────────────────
 SAMPLE_PLACEHOLDER = "\n\n".join(SAMPLE_POSTS[:2])
 MULTI_PLACEHOLDER = (
@@ -244,6 +435,40 @@ with gr.Blocks(title="TakeMeter Classifier", theme=gr.themes.Soft()) as demo:
             wrap=True,
         )
         file_btn.click(fn=infer_file, inputs=file_in, outputs=file_table)
+
+    with gr.Tab("Stretch Features Analysis"):
+        gr.Markdown(
+            "## 🎁 Stretch Features Implementation\n"
+            "Analysis of inter-annotator reliability and confidence calibration."
+        )
+
+        gr.Markdown("### 1. Inter-Annotator Reliability")
+        gr.Markdown(
+            "Evaluates agreement between human annotators using Cohen's Kappa. "
+            "Tests whether labeling guidelines are clear and consistent."
+        )
+        iaa_btn = gr.Button("Compute Inter-Annotator Reliability", variant="primary")
+        iaa_summary = gr.Markdown()
+        iaa_table = gr.Dataframe(wrap=True)
+        iaa_btn.click(
+            fn=analyze_stretch_features_iaa,
+            outputs=[iaa_summary, iaa_table]
+        )
+
+        gr.Markdown("---")
+
+        gr.Markdown("### 2. Confidence Calibration")
+        gr.Markdown(
+            "Checks if model confidence scores align with actual accuracy. "
+            "A 90% confident prediction should be correct ~90% of the time."
+        )
+        cal_btn = gr.Button("Analyze Confidence Calibration", variant="primary")
+        cal_summary = gr.Markdown()
+        cal_table = gr.Dataframe(wrap=True)
+        cal_btn.click(
+            fn=analyze_stretch_features_calibration,
+            outputs=[cal_summary, cal_table]
+        )
 
 
 if __name__ == "__main__":

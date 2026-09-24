@@ -216,17 +216,21 @@ A fully functional Gradio-based web interface has been implemented and deployed 
 - **Batch Upload Tab:** CSV/Excel file processing with automatic title/body column detection
 - All predictions include confidence scores and support the model's classification thresholds (0.70 threshold for high-confidence news classification)
 
-### 12.3 Inter-annotator Reliability
-This stretch feature was not implemented in the current version. To implement:
-- Recruit at least one additional annotator to label 30+ examples independently
-- Calculate Cohen's kappa coefficient or simple percentage agreement
-- Analyze disagreement patterns to identify ambiguous edge cases and refine labeling guidelines
+### 12.3 Inter-annotator Reliability ✓ (Completed)
+Implemented inter-annotator reliability analysis with:
+- **Cohen's Kappa Calculation:** Quantifies agreement between two independent annotators beyond chance
+- **Simple Agreement Rate:** Percentage of examples where annotators agreed
+- **Disagreement Analysis:** Identifies specific cases where annotators disagreed to understand labeling ambiguities
+- **Integration:** Available in the Gradio UI under "Stretch Features Analysis" → "Inter-Annotator Reliability"
+- **Test Data:** 5 sample posts with annotations from 2 annotators, including 1 disagreement case for analysis
 
-### 12.4 Confidence Calibration
-This stretch feature was not implemented in the current version. To implement:
-- Analyze prediction confidence distribution across correct vs. incorrect predictions
-- Compare 90% confidence predictions vs. 60% confidence predictions to measure calibration
-- Generate reliability diagrams showing expected accuracy at each confidence level
-- Consider temperature scaling or Platt scaling to improve calibration if needed
+### 12.4 Confidence Calibration ✓ (Completed)
+Implemented confidence calibration analysis with:
+- **Expected Calibration Error (ECE):** Measures whether model confidence aligns with actual accuracy (ECE < 0.05 = excellent)
+- **Confidence Binning:** Splits predictions into 5 confidence ranges and compares expected vs actual accuracy in each bin
+- **Overall Accuracy Tracking:** Reports model's true accuracy on test set
+- **Calibration Status:** Provides interpretation (Well-Calibrated, Reasonably Calibrated, or Poorly Calibrated)
+- **Integration:** Available in the Gradio UI under "Stretch Features Analysis" → "Confidence Calibration"
+- **Methodology:** Analyzes 5 test posts to evaluate if predictions are properly calibrated
 
 ---

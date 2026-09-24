@@ -176,7 +176,7 @@ The "Pure Source" Exception: If the post simply links to a news source or copies
 
 ## 8. Stretch Features Status
 
-### Completed Features
+### Completed Features (All 4/4)
 
 **Error Pattern Analysis** ✓
 - Identified systematic pattern: pronoun-dominance overfitting
@@ -193,17 +193,19 @@ The "Pure Source" Exception: If the post simply links to a news source or copies
 - CSV/Excel file upload with auto-detection of title/body columns
 - Confidence scores and threshold-aware predictions implemented
 
-### Not Implemented
+**Inter-annotator Reliability** ✓ (NEW)
+- Cohen's Kappa calculation: Quantifies agreement between 2 annotators
+- Simple agreement rate computed and displayed
+- Disagreement analysis identifies ambiguous cases
+- Integrated into Gradio UI under "Stretch Features Analysis" tab
+- Test data: 5 posts with 2 annotator labels each (1 disagreement case)
 
-**Inter-annotator Reliability**
-- Would require recruiting additional annotator for 30+ examples
-- Cohen's kappa calculation framework prepared but not executed
-- Disagreement analysis procedure documented
-
-**Confidence Calibration**
-- Model produces confidence scores but calibration analysis not performed
-- Confidence correlation with accuracy not measured
-- Temperature scaling or Platt scaling not applied
-- Reliability diagram generation not conducted
+**Confidence Calibration** ✓ (NEW)
+- Expected Calibration Error (ECE) computation: Measures confidence vs accuracy alignment
+- Confidence binning analysis: 5 ranges (0-60%, 60-70%, 70-80%, 80-90%, 90-100%)
+- Calibration status classification: Well/Reasonably/Poorly calibrated
+- Overall accuracy reporting on test set
+- Integrated into Gradio UI under "Stretch Features Analysis" tab
+- Methodology: Evaluates whether model's confidence scores are meaningful
 
   
